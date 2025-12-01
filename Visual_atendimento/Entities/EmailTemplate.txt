@@ -1,0 +1,46 @@
+{
+  "name": "EmailTemplate",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Nome do template"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "proposal",
+        "followup",
+        "welcome",
+        "order_confirmation",
+        "shipping",
+        "custom"
+      ],
+      "description": "Tipo de template"
+    },
+    "subject": {
+      "type": "string",
+      "description": "Assunto do email"
+    },
+    "body": {
+      "type": "string",
+      "description": "Corpo do email (HTML)"
+    },
+    "variables": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Vari\u00e1veis dispon\u00edveis (ex: {{nome}}, {{valor}})"
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "required": [
+    "name",
+    "subject",
+    "body"
+  ]
+}

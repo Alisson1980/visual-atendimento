@@ -1,0 +1,337 @@
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { 
+  Settings, 
+  FolderTree, 
+  Plus, 
+  Edit, 
+  Trash2,
+  Upload,
+  Loader2,
+  Tag
+} from "lucide-react";
+
+export default function SettingsPage() {
+  const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState('categories');
+  
+  // Category state
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [editingCategory, setEditingCategory] = useState(null);
+  const [categoryForm, setCategoryForm] = useState({
+    name: '',
+    description: '',
+    image_url: '',
+    is_active: true,
+    order: 0
+  });
+  const [uploadingImage, setUploadingImage] = useState(false);
+
+  // Load categories
+  const { data: categories = [], isLoading: loadingCategories } = useQuery({
+    queryKey: ['categories'],
+    queryFn: () => base44.entities.Category.list('order', 100)
+  });
+
+  // Category mutations
+  const saveCategory = useMutation({
+    mutationFn: async (data) => {
+      if (editingCategory) {
+        return base44.entities.Category.update(editingCategory.id, data);
+      }
+      return base44.entities.Category.create(data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['categories']);
+      handleCloseCategory();
+    }
+  });
+
+  const deleteCategory = useMutation({
+    mutationFn: (id) => base44.entities.Category.delete(id),
+    onSuccess: () => queryClient.invalidateQueries(['categories'])
+  });
+
+  const handleOpenCategory = (cat = null) => {
+    if (cat) {
+      setEditingCategory(cat);
+      setCategoryForm({
+        name: cat.name || '',
+        description: cat.description || '',
+        image_url: cat.image_url || '',
+        is_active: cat.is_active !== false,
+        order: cat.order || 0
+      });
+    } else {
+      setEditingCategory(null);
+      setCategoryForm({
+        name: '',
+        description: '',
+        image_url: '',
+        is_active: true,
+        order: categories.length
+      });
+    }
+    setShowCategoryModal(true);
+  };
+
+  const handleCloseCategory = () => {
+    setShowCategoryModal(false);
+    setEditingCategory(null);
+  };
+
+  const handleImageUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingImage(true);
+    const { file_url } = await base44.integrations.Core.UploadFile({ file });
+    setCategoryForm(prev => ({ ...prev, image_url: file_url }));
+    setUploadingImage(false);
+  };
+
+  const handleSaveCategory = (e) => {
+    e.preventDefault();
+    saveCategory.mutate(categoryForm);
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 p-6">
+      <div className="max-w-5xl mx-auto space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+            <Settings className="w-6 h-6" />
+            Configurações
+          </h1>
+          <p className="text-slate-500">Gerencie cadastros e configurações do sistema</p>
+        </div>
+
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="bg-slate-100">
+            <TabsTrigger value="categories">
+              <FolderTree className="w-4 h-4 mr-2" />
+              Categorias
+            </TabsTrigger>
+            <TabsTrigger value="tags">
+              <Tag className="w-4 h-4 mr-2" />
+              Tags
+            </TabsTrigger>
+          </TabsList>
+
+          {/* Categories Tab */}
+          <TabsContent value="categories" className="mt-6">
+            <Card className="border-0 shadow-sm">
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle>Categorias de Produtos</CardTitle>
+                <Button onClick={() => handleOpenCategory()} className="bg-slate-800 hover:bg-slate-700">
+                  <Plus className="w-4 h-4 mr-2" />
+                  Nova Categoria
+                </Button>
+              </CardHeader>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Ordem</TableHead>
+                      <TableHead>Imagem</TableHead>
+                      <TableHead>Nome</TableHead>
+                      <TableHead>Descrição</TableHead>
+                      <TableHead className="text-center">Status</TableHead>
+                      <TableHead></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {loadingCategories ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-8 text-slate-400">
+                          Carregando...
+                        </TableCell>
+                      </TableRow>
+                    ) : categories.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-8 text-slate-400">
+                          <FolderTree className="w-10 h-10 mx-auto mb-2 opacity-50" />
+                          Nenhuma categoria cadastrada
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      categories.map(cat => (
+                        <TableRow key={cat.id}>
+                          <TableCell className="font-mono text-sm">{cat.order || 0}</TableCell>
+                          <TableCell>
+                            {cat.image_url ? (
+                              <img src={cat.image_url} alt="" className="w-10 h-10 rounded-lg object-cover" />
+                            ) : (
+                              <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center">
+                                <FolderTree className="w-4 h-4 text-slate-400" />
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell className="font-medium">{cat.name}</TableCell>
+                          <TableCell className="text-slate-500 max-w-xs truncate">
+                            {cat.description || '-'}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <Badge className={cat.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}>
+                              {cat.is_active ? 'Ativa' : 'Inativa'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex gap-1 justify-end">
+                              <Button variant="ghost" size="icon" onClick={() => handleOpenCategory(cat)}>
+                                <Edit className="w-4 h-4" />
+                              </Button>
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="text-red-600"
+                                onClick={() => deleteCategory.mutate(cat.id)}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Tags Tab */}
+          <TabsContent value="tags" className="mt-6">
+            <Card className="border-0 shadow-sm">
+              <CardContent className="p-12 text-center">
+                <Tag className="w-12 h-12 mx-auto text-slate-300 mb-4" />
+                <p className="text-slate-500">
+                  Gerenciamento de tags em breve
+                </p>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+      </div>
+
+      {/* Category Modal */}
+      <Dialog open={showCategoryModal} onOpenChange={setShowCategoryModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {editingCategory ? 'Editar Categoria' : 'Nova Categoria'}
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSaveCategory} className="space-y-4">
+            <div className="space-y-2">
+              <Label>Nome *</Label>
+              <Input
+                value={categoryForm.name}
+                onChange={(e) => setCategoryForm({ ...categoryForm, name: e.target.value })}
+                placeholder="Nome da categoria"
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Descrição</Label>
+              <Textarea
+                value={categoryForm.description}
+                onChange={(e) => setCategoryForm({ ...categoryForm, description: e.target.value })}
+                placeholder="Descrição da categoria"
+                rows={2}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Imagem</Label>
+              <div className="flex gap-3">
+                {categoryForm.image_url ? (
+                  <div className="relative">
+                    <img 
+                      src={categoryForm.image_url} 
+                      alt="" 
+                      className="w-20 h-20 rounded-lg object-cover"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setCategoryForm({ ...categoryForm, image_url: '' })}
+                      className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center text-xs"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ) : (
+                  <label className="w-20 h-20 rounded-lg border-2 border-dashed border-slate-300 flex items-center justify-center cursor-pointer hover:border-slate-400">
+                    {uploadingImage ? (
+                      <Loader2 className="w-5 h-5 text-slate-400 animate-spin" />
+                    ) : (
+                      <Upload className="w-5 h-5 text-slate-400" />
+                    )}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleImageUpload}
+                      disabled={uploadingImage}
+                    />
+                  </label>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Ordem</Label>
+                <Input
+                  type="number"
+                  value={categoryForm.order}
+                  onChange={(e) => setCategoryForm({ ...categoryForm, order: parseInt(e.target.value) || 0 })}
+                  placeholder="0"
+                />
+              </div>
+              <div className="flex items-center gap-2 pt-6">
+                <Switch
+                  checked={categoryForm.is_active}
+                  onCheckedChange={(v) => setCategoryForm({ ...categoryForm, is_active: v })}
+                />
+                <Label>Ativa</Label>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-4 border-t">
+              <Button type="button" variant="outline" onClick={handleCloseCategory}>
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={saveCategory.isPending}>
+                {saveCategory.isPending ? 'Salvando...' : 'Salvar'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

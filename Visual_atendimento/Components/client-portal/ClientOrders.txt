@@ -1,0 +1,522 @@
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { 
+  ShoppingBag, 
+  Package,
+  Truck,
+  CheckCircle2,
+  Clock,
+  XCircle,
+  MapPin,
+  Calendar,
+  CreditCard,
+  PackageCheck,
+  ExternalLink,
+  Loader2,
+  ChevronRight,
+  X,
+  ZoomIn,
+  Plus
+} from "lucide-react";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
+import NewOrderModal from './NewOrderModal';
+
+const statusConfig = {
+  pending: { label: 'Aguardando Confirmação', color: 'bg-amber-100 text-amber-700', icon: Clock, step: 1 },
+  confirmed: { label: 'Confirmado', color: 'bg-blue-100 text-blue-700', icon: Package, step: 2 },
+  in_production: { label: 'Em Produção', color: 'bg-violet-100 text-violet-700', icon: Package, step: 3 },
+  ready: { label: 'Pronto para Envio', color: 'bg-indigo-100 text-indigo-700', icon: PackageCheck, step: 4 },
+  shipped: { label: 'Enviado', color: 'bg-cyan-100 text-cyan-700', icon: Truck, step: 5 },
+  delivered: { label: 'Entregue', color: 'bg-green-100 text-green-700', icon: CheckCircle2, step: 6 },
+  cancelled: { label: 'Cancelado', color: 'bg-red-100 text-red-700', icon: XCircle, step: 0 }
+};
+
+const paymentStatusConfig = {
+  pending: { label: 'Pendente', color: 'bg-amber-100 text-amber-700' },
+  paid: { label: 'Pago', color: 'bg-emerald-100 text-emerald-700' },
+  partial: { label: 'Parcial', color: 'bg-blue-100 text-blue-700' },
+  refunded: { label: 'Reembolsado', color: 'bg-red-100 text-red-700' }
+};
+
+export default function ClientOrders({ customerId, developments = [], customerData, allArtworkVersions = [] }) {
+  const queryClient = useQueryClient();
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [zoomedImage, setZoomedImage] = useState(null);
+  const [showNewOrderModal, setShowNewOrderModal] = useState(false);
+
+  // Get approved developments that can be reordered
+  const approvedDevs = developments.filter(d => 
+    ['approved', 'order_created', 'production', 'completed'].includes(d.status)
+  );
+
+  const { data: orders = [], isLoading } = useQuery({
+    queryKey: ['client-orders', customerId],
+    queryFn: () => base44.entities.Order.filter(
+      { customer_id: customerId },
+      '-created_date'
+    ),
+    enabled: !!customerId,
+    refetchInterval: 30000
+  });
+
+  const confirmDelivery = useMutation({
+    mutationFn: (orderId) => base44.entities.Order.update(orderId, {
+      status: 'delivered',
+      delivered_at: new Date().toISOString()
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['client-orders', customerId]);
+      setShowDetailModal(false);
+    }
+  });
+
+  const handleViewDetails = (order) => {
+    setSelectedOrder(order);
+    setShowDetailModal(true);
+  };
+
+  const getStatusStep = (status) => statusConfig[status]?.step || 0;
+
+  if (isLoading) {
+    return (
+      <div className="space-y-3">
+        {[1, 2, 3].map(i => (
+          <Card key={i} className="animate-pulse">
+            <CardContent className="p-4">
+              <div className="h-16 bg-slate-100 rounded" />
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    );
+  }
+
+  const statusSteps = ['pending', 'confirmed', 'in_production', 'ready', 'shipped', 'delivered'];
+
+  return (
+    <div className="space-y-4">
+      {/* New Order Button */}
+      {approvedDevs.length > 0 && (
+        <div className="flex items-center justify-between p-4 bg-emerald-50 rounded-xl">
+          <div>
+            <p className="font-medium text-emerald-900">Fazer Novo Pedido</p>
+            <p className="text-sm text-emerald-700">
+              {approvedDevs.length} item(s) aprovado(s) disponível(is)
+            </p>
+          </div>
+          <Button
+            onClick={() => setShowNewOrderModal(true)}
+            className="bg-emerald-600 hover:bg-emerald-700"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Novo Pedido
+          </Button>
+        </div>
+      )}
+
+      {orders.length === 0 && (
+        <Card className="border-0 shadow-sm">
+          <CardContent className="p-12 text-center">
+            <ShoppingBag className="w-16 h-16 text-slate-200 mx-auto mb-4" />
+            <p className="text-slate-500">
+              Você ainda não tem pedidos.<br />
+              Clique em "Novo Pedido" para fazer seu primeiro pedido.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {orders.map(order => {
+        const StatusIcon = statusConfig[order.status]?.icon || Clock;
+        const currentStep = getStatusStep(order.status);
+        return (
+          <Card 
+            key={order.id} 
+            className="border-0 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+            onClick={() => handleViewDetails(order)}
+          >
+            <CardContent className="p-6">
+              <div className="flex flex-col md:flex-row md:items-center gap-4">
+                {/* Order Info */}
+                <div className="flex-1">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${statusConfig[order.status]?.color.split(' ')[0]}`}>
+                      <StatusIcon className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-slate-900">
+                          Pedido #{order.order_number || order.id?.slice(-6)}
+                        </span>
+                        <Badge className={statusConfig[order.status]?.color}>
+                          {statusConfig[order.status]?.label}
+                        </Badge>
+                      </div>
+                      <p className="text-sm text-slate-500">
+                        {format(new Date(order.created_date), "d 'de' MMMM 'de' yyyy", { locale: ptBR })}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Mini Progress for non-cancelled orders */}
+                  {order.status !== 'cancelled' && (
+                    <div className="mt-3 flex items-center gap-1">
+                      {statusSteps.map((step, idx) => {
+                        const stepNum = statusConfig[step]?.step || 0;
+                        const isCompleted = currentStep >= stepNum;
+                        const isCurrent = currentStep === stepNum;
+                        return (
+                          <div key={step} className="flex items-center">
+                            <div className={`w-2 h-2 rounded-full ${
+                              isCompleted ? 'bg-emerald-500' : 'bg-slate-200'
+                            } ${isCurrent ? 'ring-2 ring-emerald-200' : ''}`} />
+                            {idx < statusSteps.length - 1 && (
+                              <div className={`w-6 h-0.5 ${
+                                currentStep > stepNum ? 'bg-emerald-500' : 'bg-slate-200'
+                              }`} />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Items preview */}
+                  <div className="mt-3 text-sm text-slate-500">
+                    {order.items?.length} {order.items?.length === 1 ? 'item' : 'itens'}
+                  </div>
+                </div>
+
+                {/* Total and Payment */}
+                <div className="text-right space-y-2">
+                  <div>
+                    <p className="text-sm text-slate-500">Total</p>
+                    <p className="text-2xl font-bold text-slate-900">
+                      R$ {order.total?.toFixed(2)}
+                    </p>
+                  </div>
+                  <Badge className={paymentStatusConfig[order.payment_status]?.color}>
+                    {paymentStatusConfig[order.payment_status]?.label}
+                  </Badge>
+                  <Button variant="ghost" size="sm" className="mt-2">
+                    Ver detalhes <ChevronRight className="w-4 h-4 ml-1" />
+                  </Button>
+                </div>
+              </div>
+
+              {/* Shipping info */}
+              {order.status === 'shipped' && order.tracking_code && (
+                <div className="mt-4 pt-4 border-t">
+                  <div className="flex items-center justify-between p-3 bg-cyan-50 rounded-lg">
+                    <div className="flex items-center gap-2 text-cyan-700">
+                      <Truck className="w-5 h-5" />
+                      <span className="font-medium">Pedido a caminho!</span>
+                    </div>
+                    <Badge variant="outline" className="text-cyan-700 border-cyan-300">
+                      {order.tracking_code}
+                    </Badge>
+                  </div>
+                </div>
+              )}
+
+              {order.status === 'delivered' && (
+                <div className="mt-4 pt-4 border-t">
+                  <div className="flex items-center gap-2 p-3 bg-emerald-50 rounded-lg text-emerald-700">
+                    <CheckCircle2 className="w-5 h-5" />
+                    <span className="font-medium">Pedido entregue com sucesso!</span>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })}
+
+      {/* Order Detail Modal */}
+      <Dialog open={showDetailModal} onOpenChange={setShowDetailModal}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Detalhes do Pedido</DialogTitle>
+          </DialogHeader>
+
+          {selectedOrder && (
+            <div className="space-y-6">
+              {/* Header */}
+              <div className="flex items-center justify-between p-4 bg-slate-50 rounded-xl">
+                <div>
+                  <p className="text-sm text-slate-500">Pedido</p>
+                  <h3 className="text-xl font-bold">#{selectedOrder.order_number || selectedOrder.id?.slice(-6)}</h3>
+                  <p className="text-sm text-slate-500">
+                    {format(new Date(selectedOrder.created_date), "d 'de' MMMM 'de' yyyy 'às' HH:mm", { locale: ptBR })}
+                  </p>
+                </div>
+                <Badge className={statusConfig[selectedOrder.status]?.color + ' text-sm px-3 py-1'}>
+                  {statusConfig[selectedOrder.status]?.label}
+                </Badge>
+              </div>
+
+              {/* Progress Timeline */}
+              {selectedOrder.status !== 'cancelled' && (
+                <div className="space-y-3">
+                  <h4 className="font-semibold text-slate-900">Status do Pedido</h4>
+                  <div className="relative">
+                    <div className="flex justify-between">
+                      {statusSteps.map((step, idx) => {
+                        const config = statusConfig[step];
+                        const StepIcon = config?.icon || Clock;
+                        const stepNum = config?.step || 0;
+                        const currentStepNum = getStatusStep(selectedOrder.status);
+                        const isCompleted = currentStepNum >= stepNum;
+                        const isCurrent = currentStepNum === stepNum;
+                        
+                        return (
+                          <div key={step} className="flex flex-col items-center flex-1">
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                              isCompleted 
+                                ? 'bg-emerald-500 text-white' 
+                                : 'bg-slate-100 text-slate-400'
+                            } ${isCurrent ? 'ring-4 ring-emerald-100' : ''}`}>
+                              <StepIcon className="w-5 h-5" />
+                            </div>
+                            <p className={`text-xs mt-2 text-center ${
+                              isCompleted ? 'text-emerald-700 font-medium' : 'text-slate-400'
+                            }`}>
+                              {config?.label.split(' ')[0]}
+                            </p>
+                            {idx < statusSteps.length - 1 && (
+                              <div className={`absolute h-0.5 top-5 ${
+                                currentStepNum > stepNum ? 'bg-emerald-500' : 'bg-slate-200'
+                              }`} style={{
+                                left: `${(idx + 0.5) * (100 / statusSteps.length)}%`,
+                                width: `${100 / statusSteps.length}%`
+                              }} />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Order Items */}
+              <div className="space-y-3">
+                <h4 className="font-semibold text-slate-900">Itens do Pedido</h4>
+                <div className="space-y-2">
+                  {selectedOrder.items?.map((item, idx) => (
+                    <div key={idx} className="flex gap-3 items-center p-3 bg-slate-50 rounded-lg">
+                      {/* Product Image Thumbnail */}
+                      {item.image_url ? (
+                        <div 
+                          className="w-16 h-16 rounded-lg overflow-hidden bg-white border cursor-pointer hover:ring-2 hover:ring-violet-300 transition-all flex-shrink-0 relative group"
+                          onClick={() => setZoomedImage(item.image_url)}
+                        >
+                          <img 
+                            src={item.image_url} 
+                            alt={item.product_name} 
+                            className="w-full h-full object-contain p-1"
+                          />
+                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+                            <ZoomIn className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="w-16 h-16 rounded-lg bg-slate-200 flex items-center justify-center flex-shrink-0">
+                          <Package className="w-6 h-6 text-slate-400" />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-slate-900">{item.product_name}</p>
+                        {item.reference_code && (
+                          <p className="text-xs text-slate-500 font-mono">Ref: {item.reference_code}</p>
+                        )}
+                        <p className="text-sm text-slate-500">{item.quantity} unidades × R$ {item.unit_price?.toFixed(2)}</p>
+                      </div>
+                      <span className="font-bold text-slate-900">R$ {item.total?.toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Price Summary */}
+              <div className="p-4 bg-slate-50 rounded-xl space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Subtotal</span>
+                  <span>R$ {selectedOrder.subtotal?.toFixed(2)}</span>
+                </div>
+                {selectedOrder.discount > 0 && (
+                  <div className="flex justify-between text-sm text-emerald-600">
+                    <span>Desconto</span>
+                    <span>-R$ {selectedOrder.discount?.toFixed(2)}</span>
+                  </div>
+                )}
+                {selectedOrder.shipping_cost > 0 && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-500">Frete</span>
+                    <span>R$ {selectedOrder.shipping_cost?.toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-lg font-bold pt-2 border-t">
+                  <span>Total</span>
+                  <span className="text-emerald-600">R$ {selectedOrder.total?.toFixed(2)}</span>
+                </div>
+              </div>
+
+              {/* Payment Info */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-3 bg-slate-50 rounded-lg">
+                  <p className="text-xs text-slate-500 flex items-center gap-1">
+                    <CreditCard className="w-3 h-3" /> Pagamento
+                  </p>
+                  <Badge className={paymentStatusConfig[selectedOrder.payment_status]?.color + ' mt-1'}>
+                    {paymentStatusConfig[selectedOrder.payment_status]?.label}
+                  </Badge>
+                </div>
+                {selectedOrder.estimated_shipping_date && (
+                  <div className="p-3 bg-slate-50 rounded-lg">
+                    <p className="text-xs text-slate-500 flex items-center gap-1">
+                      <Calendar className="w-3 h-3" /> Previsão de Envio
+                    </p>
+                    <p className="font-medium mt-1">
+                      {format(new Date(selectedOrder.estimated_shipping_date), "dd/MM/yyyy")}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Shipping Info */}
+              {selectedOrder.status === 'shipped' && (
+                <div className="p-4 bg-cyan-50 rounded-xl border border-cyan-200">
+                  <div className="flex items-center gap-2 text-cyan-700 mb-3">
+                    <Truck className="w-5 h-5" />
+                    <span className="font-semibold">Informações de Envio</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    {selectedOrder.shipping_carrier && (
+                      <div>
+                        <p className="text-cyan-600">Transportadora</p>
+                        <p className="font-medium text-cyan-900">{selectedOrder.shipping_carrier}</p>
+                      </div>
+                    )}
+                    {selectedOrder.tracking_code && (
+                      <div>
+                        <p className="text-cyan-600">Código de Rastreio</p>
+                        <p className="font-medium text-cyan-900 flex items-center gap-1">
+                          {selectedOrder.tracking_code}
+                          <ExternalLink className="w-3 h-3" />
+                        </p>
+                      </div>
+                    )}
+                    {selectedOrder.shipped_date && (
+                      <div>
+                        <p className="text-cyan-600">Data de Envio</p>
+                        <p className="font-medium text-cyan-900">
+                          {format(new Date(selectedOrder.shipped_date), "dd/MM/yyyy")}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Delivery Address */}
+              {selectedOrder.shipping_address && (
+                <div className="space-y-2">
+                  <h4 className="font-semibold text-slate-900 flex items-center gap-2">
+                    <MapPin className="w-4 h-4" /> Endereço de Entrega
+                  </h4>
+                  <div className="p-3 bg-slate-50 rounded-lg text-sm">
+                    <p>{selectedOrder.shipping_address.street}, {selectedOrder.shipping_address.number}</p>
+                    {selectedOrder.shipping_address.complement && (
+                      <p>{selectedOrder.shipping_address.complement}</p>
+                    )}
+                    <p>{selectedOrder.shipping_address.neighborhood} - {selectedOrder.shipping_address.city}/{selectedOrder.shipping_address.state}</p>
+                    <p>CEP: {selectedOrder.shipping_address.zipcode}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Confirm Delivery Button */}
+              {selectedOrder.status === 'shipped' && (
+                <div className="pt-4 border-t">
+                  <Button
+                    className="w-full bg-emerald-600 hover:bg-emerald-700"
+                    onClick={() => confirmDelivery.mutate(selectedOrder.id)}
+                    disabled={confirmDelivery.isPending}
+                  >
+                    {confirmDelivery.isPending ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="w-4 h-4 mr-2" />
+                    )}
+                    Confirmar Recebimento
+                  </Button>
+                  <p className="text-xs text-slate-500 text-center mt-2">
+                    Clique para confirmar que recebeu o pedido
+                  </p>
+                </div>
+              )}
+
+              {/* Delivered confirmation */}
+              {selectedOrder.status === 'delivered' && (
+                <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200 text-center">
+                  <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-2" />
+                  <p className="font-semibold text-emerald-900">Pedido Entregue!</p>
+                  {selectedOrder.delivered_at && (
+                    <p className="text-sm text-emerald-700">
+                      Recebido em {format(new Date(selectedOrder.delivered_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Image Zoom Modal */}
+      <Dialog open={!!zoomedImage} onOpenChange={() => setZoomedImage(null)}>
+        <DialogContent className="max-w-3xl p-2">
+          <button 
+            onClick={() => setZoomedImage(null)}
+            className="absolute top-3 right-3 p-2 bg-white rounded-full shadow-lg hover:bg-slate-100 z-10"
+          >
+            <X className="w-5 h-5" />
+          </button>
+          {zoomedImage && (
+            <div className="w-full flex items-center justify-center bg-slate-50 rounded-xl p-4">
+              <img 
+                src={zoomedImage} 
+                alt="Imagem do produto" 
+                className="max-w-full max-h-[70vh] object-contain"
+              />
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* New Order Modal */}
+      <NewOrderModal
+        open={showNewOrderModal}
+        onOpenChange={setShowNewOrderModal}
+        approvedDevs={approvedDevs}
+        customerId={customerId}
+        customerData={customerData}
+        allArtworkVersions={allArtworkVersions}
+      />
+    </div>
+  );
+}

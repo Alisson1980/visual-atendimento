@@ -1,0 +1,287 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { 
+  Send, 
+  Phone,
+  User,
+  MessageCircle,
+  Check,
+  CheckCheck,
+  Image,
+  Paperclip,
+  Smile,
+  Mic,
+  MoreVertical,
+  ArrowLeft,
+  X
+} from "lucide-react";
+import { format } from "date-fns";
+import { processIncomingWhatsApp } from './WhatsAppIntegration';
+
+// WhatsApp Icon
+const WhatsAppIcon = ({ className }) => (
+  <svg viewBox="0 0 24 24" className={className} fill="currentColor">
+    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+  </svg>
+);
+
+export default function WhatsAppSimulator({ open, onOpenChange }) {
+  const queryClient = useQueryClient();
+  const [phone, setPhone] = useState('+5511999999999');
+  const [customerName, setCustomerName] = useState('Cliente Teste');
+  const [message, setMessage] = useState('');
+  const [conversationId, setConversationId] = useState(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const messagesEndRef = useRef(null);
+
+  // Load messages for current conversation
+  const { data: messages = [], refetch: refetchMessages } = useQuery({
+    queryKey: ['simulator-messages', conversationId],
+    queryFn: async () => {
+      if (!conversationId) return [];
+      const msgs = await base44.entities.Message.filter(
+        { conversation_id: conversationId },
+        'created_date',
+        100
+      );
+      return msgs;
+    },
+    enabled: !!conversationId,
+    refetchInterval: 1500 // Poll every 1.5 seconds for new messages
+  });
+
+  // Load conversation
+  const { data: conversation } = useQuery({
+    queryKey: ['simulator-conversation', conversationId],
+    queryFn: async () => {
+      const convs = await base44.entities.Conversation.filter({ id: conversationId });
+      return convs[0];
+    },
+    enabled: !!conversationId,
+    refetchInterval: 2000
+  });
+
+  // Send message mutation
+  const sendMessage = useMutation({
+    mutationFn: async (content) => {
+      if (!conversationId) {
+        // Start new conversation
+        const result = await processIncomingWhatsApp(phone, content, customerName);
+        return result;
+      } else {
+        // Add message to existing conversation - also process automations
+        const result = await processIncomingWhatsApp(phone, content, customerName);
+        return result;
+      }
+    },
+    onSuccess: (result) => {
+      setMessage('');
+      // If new conversation was created, set the ID
+      if (result?.conversation?.id && !conversationId) {
+        setConversationId(result.conversation.id);
+        setIsConnected(true);
+      }
+      setTimeout(() => {
+        refetchMessages();
+        queryClient.invalidateQueries(['simulator-messages']);
+        queryClient.invalidateQueries(['conversations']);
+      }, 500);
+    }
+  });
+
+  // Scroll to bottom when messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const handleSend = () => {
+    if (!message.trim()) return;
+    sendMessage.mutate(message);
+  };
+
+  const handleDisconnect = () => {
+    setConversationId(null);
+    setIsConnected(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md p-0 overflow-hidden bg-[#e5ddd5]">
+        {/* WhatsApp Header */}
+        <div className="bg-[#075e54] text-white p-3 flex items-center gap-3">
+          {isConnected && (
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              className="text-white hover:bg-white/20 h-8 w-8"
+              onClick={handleDisconnect}
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </Button>
+          )}
+          <div className="w-10 h-10 bg-slate-300 rounded-full flex items-center justify-center">
+            <User className="w-6 h-6 text-slate-600" />
+          </div>
+          <div className="flex-1">
+            <p className="font-semibold">Visual Etiquetas</p>
+            <p className="text-xs text-green-200">
+              {isConnected ? 'online' : 'Clique para iniciar'}
+            </p>
+          </div>
+          <Button variant="ghost" size="icon" className="text-white hover:bg-white/20">
+            <MoreVertical className="w-5 h-5" />
+          </Button>
+        </div>
+
+        {!isConnected ? (
+          /* Connection Screen */
+          <div className="p-6 bg-white space-y-4">
+            <div className="text-center mb-6">
+              <WhatsAppIcon className="w-16 h-16 text-green-600 mx-auto mb-3" />
+              <h3 className="text-lg font-semibold text-slate-900">Simulador WhatsApp</h3>
+              <p className="text-sm text-slate-500">
+                Simule mensagens de clientes para testar o fluxo de atendimento
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-sm text-slate-600">Telefone do Cliente</label>
+                <Input
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="+5511999999999"
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <label className="text-sm text-slate-600">Nome do Cliente</label>
+                <Input
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                  placeholder="Nome do cliente"
+                  className="mt-1"
+                />
+              </div>
+            </div>
+
+            <Button 
+              className="w-full bg-green-600 hover:bg-green-700"
+              onClick={() => {
+                const initialMessage = 'Olá, gostaria de informações sobre etiquetas personalizadas';
+                setMessage(initialMessage);
+                sendMessage.mutate(initialMessage);
+              }}
+              disabled={sendMessage.isPending || !phone.trim() || !customerName.trim()}
+            >
+              {sendMessage.isPending ? (
+                <div className="w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <MessageCircle className="w-4 h-4 mr-2" />
+              )}
+              Iniciar Conversa
+            </Button>
+
+            <div className="pt-4 border-t">
+              <p className="text-xs text-slate-500 text-center">
+                💡 Dica: Abra a página "Atendimentos" em outra aba para ver as mensagens chegando
+              </p>
+            </div>
+          </div>
+        ) : (
+          /* Chat Screen */
+          <>
+            <ScrollArea className="h-[400px] p-4">
+              <div className="space-y-2">
+                {/* Welcome message */}
+                <div className="flex justify-center">
+                  <span className="text-xs bg-white/80 px-3 py-1 rounded-full text-slate-500">
+                    Mensagens são criptografadas de ponta a ponta
+                  </span>
+                </div>
+
+                {messages.map((msg) => {
+                  const isCustomer = msg.sender_type === 'customer';
+                  return (
+                    <div
+                      key={msg.id}
+                      className={`flex ${isCustomer ? 'justify-end' : 'justify-start'}`}
+                    >
+                      <div
+                        className={`max-w-[80%] p-2 rounded-lg shadow-sm ${
+                          isCustomer
+                            ? 'bg-[#dcf8c6] rounded-tr-none'
+                            : 'bg-white rounded-tl-none'
+                        }`}
+                      >
+                        {!isCustomer && (
+                          <p className="text-xs font-semibold text-green-600 mb-1">
+                            {msg.sender_name || 'Visual Etiquetas'}
+                          </p>
+                        )}
+                        <p className="text-sm text-slate-800">{msg.content}</p>
+                        <div className="flex items-center justify-end gap-1 mt-1">
+                          <span className="text-xs text-slate-500">
+                            {format(new Date(msg.created_date), 'HH:mm')}
+                          </span>
+                          {isCustomer && (
+                            <CheckCheck className={`w-4 h-4 ${
+                              msg.status === 'read' ? 'text-blue-500' : 'text-slate-400'
+                            }`} />
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                <div ref={messagesEndRef} />
+              </div>
+            </ScrollArea>
+
+            {/* Input */}
+            <div className="bg-[#f0f0f0] p-2 flex items-center gap-2">
+              <Button variant="ghost" size="icon" className="text-slate-500">
+                <Smile className="w-6 h-6" />
+              </Button>
+              <Button variant="ghost" size="icon" className="text-slate-500">
+                <Paperclip className="w-6 h-6" />
+              </Button>
+              <Input
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                placeholder="Digite uma mensagem"
+                className="flex-1 bg-white rounded-full border-0"
+                onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+              />
+              {message ? (
+                <Button 
+                  size="icon" 
+                  className="bg-green-600 hover:bg-green-700 rounded-full"
+                  onClick={handleSend}
+                  disabled={sendMessage.isPending}
+                >
+                  <Send className="w-5 h-5" />
+                </Button>
+              ) : (
+                <Button variant="ghost" size="icon" className="text-slate-500">
+                  <Mic className="w-6 h-6" />
+                </Button>
+              )}
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}

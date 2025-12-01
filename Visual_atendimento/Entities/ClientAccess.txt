@@ -1,0 +1,62 @@
+{
+  "name": "ClientAccess",
+  "type": "object",
+  "properties": {
+    "customer_id": {
+      "type": "string",
+      "description": "ID do cliente associado"
+    },
+    "customer_name": {
+      "type": "string",
+      "description": "Nome do cliente"
+    },
+    "customer_email": {
+      "type": "string",
+      "description": "Email do cliente"
+    },
+    "customer_phone": {
+      "type": "string",
+      "description": "Telefone do cliente"
+    },
+    "access_token": {
+      "type": "string",
+      "description": "Token \u00fanico de acesso"
+    },
+    "pin_code": {
+      "type": "string",
+      "description": "PIN de seguran\u00e7a opcional"
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true,
+      "description": "Se o acesso est\u00e1 ativo"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Data de expira\u00e7\u00e3o do acesso"
+    },
+    "auto_expire_days": {
+      "type": "number",
+      "description": "Dias para expirar automaticamente ap\u00f3s \u00faltimo acesso"
+    },
+    "last_access": {
+      "type": "string",
+      "format": "date-time",
+      "description": "\u00daltimo acesso"
+    },
+    "access_count": {
+      "type": "number",
+      "default": 0,
+      "description": "N\u00famero de acessos"
+    },
+    "last_ip": {
+      "type": "string",
+      "description": "\u00daltimo IP de acesso"
+    }
+  },
+  "required": [
+    "customer_id",
+    "access_token"
+  ]
+}

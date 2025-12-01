@@ -1,0 +1,659 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Upload, X, Plus, Loader2, Ruler, Layers, Settings, ChevronDown } from "lucide-react";
+
+export default function ProductFormModal({ open, onOpenChange, product, categories, collections = [], onSuccess }) {
+  const [uploading, setUploading] = useState(false);
+  const [processSearch, setProcessSearch] = useState('');
+  const [materialSearch, setMaterialSearch] = useState('');
+  const [showProcessPopover, setShowProcessPopover] = useState(false);
+  const [showMaterialPopover, setShowMaterialPopover] = useState(false);
+
+  const [formData, setFormData] = useState({
+    reference_code: '',
+    collection_id: '',
+    description: '',
+    category_id: '',
+    base_price: '',
+    min_order_quantity: 100,
+    min_reorder_quantity: 50,
+    images: [],
+    sizes: [],
+    materials: [],
+    available_processes: [],
+    is_active: true,
+    is_featured: false,
+    tags: []
+  });
+
+  const [priceManuallyEdited, setPriceManuallyEdited] = useState(false);
+
+  // Carregar tipos de processo
+  const { data: processTypes = [] } = useQuery({
+    queryKey: ['process-types'],
+    queryFn: () => base44.entities.ProcessType.filter({ is_active: true }, 'order', 100),
+    enabled: open
+  });
+
+  // Carregar matérias primas
+  const { data: materials = [] } = useQuery({
+    queryKey: ['materials'],
+    queryFn: () => base44.entities.Material.filter({ is_active: true }, 'order', 100),
+    enabled: open
+  });
+
+  useEffect(() => {
+    if (product) {
+      setFormData({
+        reference_code: product.reference_code || '',
+        collection_id: product.collection_id || '',
+        description: product.description || '',
+        category_id: product.category_id || '',
+        base_price: product.base_price?.toString() || '',
+        min_order_quantity: product.min_order_quantity || 100,
+        min_reorder_quantity: product.min_reorder_quantity || 50,
+        images: product.images || [],
+        sizes: product.sizes || [],
+        materials: product.materials || [],
+        available_processes: product.available_processes || [],
+        is_active: product.is_active !== false,
+        is_featured: product.is_featured || false,
+        tags: product.tags || []
+      });
+      setPriceManuallyEdited(false);
+    } else {
+      setFormData({
+        reference_code: '',
+        collection_id: '',
+        description: '',
+        category_id: '',
+        base_price: '',
+        min_order_quantity: 100,
+        min_reorder_quantity: 50,
+        images: [],
+        sizes: [],
+        materials: [],
+        available_processes: [],
+        is_active: true,
+        is_featured: false,
+        tags: []
+      });
+      setPriceManuallyEdited(false);
+    }
+  }, [product, open]);
+
+  // Calcular preço base automaticamente (inclui materiais + processos + setup)
+  const calculateAutoPrice = () => {
+    let total = 0;
+    
+    // Somar custo dos materiais
+    formData.materials.forEach(mat => {
+      const material = materials.find(m => m.id === mat.material_id);
+      if (material) {
+        const qty = mat.quantity_per_unit || 1;
+        total += (material.base_cost || 0) * qty;
+      }
+    });
+    
+    // Somar preço por unidade dos processos + setup
+    formData.available_processes.forEach(proc => {
+      const pt = processTypes.find(p => p.id === proc.process_type_id);
+      const pricePerUnit = proc.custom_price_per_unit ?? pt?.base_price_per_unit ?? 0;
+      const setupPrice = proc.custom_setup_price ?? pt?.setup_price ?? 0;
+      total += pricePerUnit + setupPrice;
+    });
+    
+    return total;
+  };
+
+  // Calcular total de setup (apenas para exibição)
+  const calculateSetupTotal = () => {
+    let setupTotal = 0;
+    formData.available_processes.forEach(proc => {
+      const pt = processTypes.find(p => p.id === proc.process_type_id);
+      const setupPrice = proc.custom_setup_price ?? pt?.setup_price ?? 0;
+      setupTotal += setupPrice;
+    });
+    return setupTotal;
+  };
+
+  const calculatedPrice = calculateAutoPrice();
+  const setupTotal = calculateSetupTotal();
+
+  // Atualizar preço automaticamente quando materiais/processos mudam
+  useEffect(() => {
+    if (!priceManuallyEdited && (formData.materials.length > 0 || formData.available_processes.length > 0)) {
+      setFormData(prev => ({ ...prev, base_price: calculatedPrice.toFixed(2) }));
+    }
+  }, [formData.materials, formData.available_processes, materials, processTypes, priceManuallyEdited]);
+
+  const mutation = useMutation({
+    mutationFn: async (data) => {
+      const productData = {
+        ...data,
+        base_price: parseFloat(data.base_price) || 0,
+        min_order_quantity: parseInt(data.min_order_quantity) || 100,
+        min_reorder_quantity: parseInt(data.min_reorder_quantity) || 50,
+      };
+
+      if (product) {
+        return base44.entities.Product.update(product.id, productData);
+      }
+      return base44.entities.Product.create(productData);
+    },
+    onSuccess
+  });
+
+  const handleImageUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploading(true);
+    const { file_url } = await base44.integrations.Core.UploadFile({ file });
+    setFormData(prev => ({ ...prev, images: [...prev.images, file_url] }));
+    setUploading(false);
+  };
+
+  const removeImage = (index) => {
+    setFormData(prev => ({ ...prev, images: prev.images.filter((_, i) => i !== index) }));
+  };
+
+  // Sizes
+  const addSize = () => {
+    setFormData(prev => ({
+      ...prev,
+      sizes: [...prev.sizes, { name: '', width: 0, height: 0, price_adjustment: 0 }]
+    }));
+  };
+
+  const updateSize = (index, field, value) => {
+    setFormData(prev => ({
+      ...prev,
+      sizes: prev.sizes.map((s, i) => i === index ? { ...s, [field]: value } : s)
+    }));
+  };
+
+  const removeSize = (index) => {
+    setFormData(prev => ({ ...prev, sizes: prev.sizes.filter((_, i) => i !== index) }));
+  };
+
+  // Processes
+  const addProcess = (pt) => {
+    if (formData.available_processes.find(p => p.process_type_id === pt.id)) return;
+    setFormData(prev => ({
+      ...prev,
+      available_processes: [...prev.available_processes, {
+        process_type_id: pt.id,
+        process_code: pt.code,
+        process_name: pt.name,
+        custom_price_per_unit: null,
+        custom_setup_price: null,
+        notes: ''
+      }]
+    }));
+    setShowProcessPopover(false);
+    setProcessSearch('');
+  };
+
+  const removeProcess = (processTypeId) => {
+    setFormData(prev => ({
+      ...prev,
+      available_processes: prev.available_processes.filter(p => p.process_type_id !== processTypeId)
+    }));
+  };
+
+  const updateProcess = (processTypeId, field, value) => {
+    setFormData(prev => ({
+      ...prev,
+      available_processes: prev.available_processes.map(p =>
+        p.process_type_id === processTypeId ? { ...p, [field]: value } : p
+      )
+    }));
+  };
+
+  // Materials
+  const addMaterial = (mat) => {
+    if (formData.materials.find(m => m.material_id === mat.id)) return;
+    setFormData(prev => ({
+      ...prev,
+      materials: [...prev.materials, {
+        material_id: mat.id,
+        material_code: mat.code,
+        material_name: mat.name,
+        quantity_per_unit: 1,
+        notes: ''
+      }]
+    }));
+    setShowMaterialPopover(false);
+    setMaterialSearch('');
+  };
+
+  const removeMaterial = (materialId) => {
+    setFormData(prev => ({
+      ...prev,
+      materials: prev.materials.filter(m => m.material_id !== materialId)
+    }));
+  };
+
+  const updateMaterial = (materialId, field, value) => {
+    setFormData(prev => ({
+      ...prev,
+      materials: prev.materials.map(m =>
+        m.material_id === materialId ? { ...m, [field]: value } : m
+      )
+    }));
+  };
+
+  // Filtrar processos disponíveis
+  const filteredProcessTypes = processTypes.filter(pt =>
+    !formData.available_processes.find(p => p.process_type_id === pt.id) &&
+    (pt.name.toLowerCase().includes(processSearch.toLowerCase()) ||
+     pt.code.toLowerCase().includes(processSearch.toLowerCase()))
+  );
+
+  // Filtrar materiais disponíveis
+  const filteredMaterials = materials.filter(m =>
+    !formData.materials.find(mat => mat.material_id === m.id) &&
+    (m.name.toLowerCase().includes(materialSearch.toLowerCase()) ||
+     m.code.toLowerCase().includes(materialSearch.toLowerCase()))
+  );
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    mutation.mutate(formData);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{product ? 'Editar Produto' : 'Novo Produto'}</DialogTitle>
+        </DialogHeader>
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Basic Info */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Código de Referência *</Label>
+              <Input
+                value={formData.reference_code}
+                onChange={(e) => setFormData({ ...formData, reference_code: e.target.value })}
+                placeholder="Ex: 96001"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Coleção *</Label>
+              <Select 
+                value={formData.collection_id} 
+                onValueChange={(v) => setFormData({ ...formData, collection_id: v })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione a coleção" />
+                </SelectTrigger>
+                <SelectContent>
+                  {collections.map(col => (
+                    <SelectItem key={col.id} value={col.id}>{col.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Descrição</Label>
+            <Textarea
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              placeholder="Descrição do produto"
+              rows={2}
+            />
+          </div>
+
+          {/* Pricing */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Preço Base * (por unidade)</Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={formData.base_price}
+                onChange={(e) => {
+                  setFormData({ ...formData, base_price: e.target.value });
+                  setPriceManuallyEdited(true);
+                }}
+                placeholder="0,00"
+                required
+              />
+              {priceManuallyEdited && calculatedPrice > 0 && (
+                <p className="text-xs text-amber-600">
+                  ⚠️ Valor alterado manualmente. Calculado: R$ {calculatedPrice.toFixed(2)}
+                  <button 
+                    type="button" 
+                    className="ml-2 text-blue-600 underline"
+                    onClick={() => {
+                      setFormData(prev => ({ ...prev, base_price: calculatedPrice.toFixed(2) }));
+                      setPriceManuallyEdited(false);
+                    }}
+                  >
+                    Usar calculado
+                  </button>
+                </p>
+              )}
+              {setupTotal > 0 && (
+                <p className="text-xs text-slate-500">
+                  Inclui setup: R$ {setupTotal.toFixed(2)}
+                </p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label>Categoria</Label>
+              <Select 
+                value={formData.category_id} 
+                onValueChange={(v) => setFormData({ ...formData, category_id: v })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione" />
+                </SelectTrigger>
+                <SelectContent>
+                  {categories.map(cat => (
+                    <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* Quantidades Mínimas */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Qtd. Mínima 1ª Compra</Label>
+              <Input
+                type="number"
+                value={formData.min_order_quantity}
+                onChange={(e) => setFormData({ ...formData, min_order_quantity: e.target.value })}
+                placeholder="1000"
+              />
+              <p className="text-xs text-slate-500">Quantidade mínima para primeira compra do cliente</p>
+            </div>
+            <div className="space-y-2">
+              <Label>Qtd. Mínima Repetição</Label>
+              <Input
+                type="number"
+                value={formData.min_reorder_quantity}
+                onChange={(e) => setFormData({ ...formData, min_reorder_quantity: e.target.value })}
+                placeholder="300"
+              />
+              <p className="text-xs text-slate-500">Quantidade mínima para recompra do mesmo modelo</p>
+            </div>
+          </div>
+
+          {/* Images */}
+          <div className="space-y-2">
+            <Label>Imagens do Produto</Label>
+            <div className="flex flex-wrap gap-3">
+              {formData.images.map((url, index) => (
+                <div key={index} className="relative w-20 h-20 rounded-lg overflow-hidden border">
+                  <img src={url} alt="" className="w-full h-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => removeImage(index)}
+                    className="absolute top-1 right-1 p-1 bg-red-500 rounded-full text-white"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
+              <label className="w-20 h-20 rounded-lg border-2 border-dashed border-slate-300 flex items-center justify-center cursor-pointer hover:border-slate-400">
+                {uploading ? (
+                  <Loader2 className="w-5 h-5 text-slate-400 animate-spin" />
+                ) : (
+                  <Upload className="w-5 h-5 text-slate-400" />
+                )}
+                <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} disabled={uploading} />
+              </label>
+            </div>
+          </div>
+
+          {/* Matérias Primas */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <Label className="flex items-center gap-2">
+                <Layers className="w-4 h-4" />
+                Matérias Primas
+              </Label>
+              <Popover open={showMaterialPopover} onOpenChange={setShowMaterialPopover}>
+                <PopoverTrigger asChild>
+                  <Button type="button" variant="outline" size="sm">
+                    <Plus className="w-4 h-4 mr-1" />
+                    Adicionar
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="p-0 w-64" align="end">
+                  <Command>
+                    <CommandInput 
+                      placeholder="Buscar matéria prima..." 
+                      value={materialSearch}
+                      onValueChange={setMaterialSearch}
+                    />
+                    <CommandList>
+                      <CommandEmpty>Nenhuma encontrada</CommandEmpty>
+                      <CommandGroup>
+                        {filteredMaterials.map(m => (
+                          <CommandItem key={m.id} onSelect={() => addMaterial(m)}>
+                            <span className="font-mono text-xs mr-2">{m.code}</span>
+                            {m.name}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+            </div>
+
+            {formData.materials.length > 0 && (
+              <div className="space-y-2">
+                {formData.materials.map(mat => (
+                  <div key={mat.material_id} className="flex items-center gap-2 p-2 bg-amber-50 rounded-lg border border-amber-200">
+                    <Badge variant="outline" className="font-mono">{mat.material_code}</Badge>
+                    <span className="flex-1 text-sm">{mat.material_name}</span>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={mat.quantity_per_unit || ''}
+                      onChange={(e) => updateMaterial(mat.material_id, 'quantity_per_unit', parseFloat(e.target.value) || 0)}
+                      placeholder="Qtd"
+                      className="w-20 h-8 text-sm"
+                    />
+                    <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => removeMaterial(mat.material_id)}>
+                      <X className="w-4 h-4 text-red-600" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Processos Disponíveis */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <Label className="flex items-center gap-2">
+                <Settings className="w-4 h-4" />
+                Processos Disponíveis
+              </Label>
+              <Popover open={showProcessPopover} onOpenChange={setShowProcessPopover}>
+                <PopoverTrigger asChild>
+                  <Button type="button" variant="outline" size="sm">
+                    <Plus className="w-4 h-4 mr-1" />
+                    Adicionar
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="p-0 w-64" align="end">
+                  <Command>
+                    <CommandInput 
+                      placeholder="Buscar processo..." 
+                      value={processSearch}
+                      onValueChange={setProcessSearch}
+                    />
+                    <CommandList>
+                      <CommandEmpty>Nenhum encontrado</CommandEmpty>
+                      <CommandGroup>
+                        {filteredProcessTypes.map(pt => (
+                          <CommandItem key={pt.id} onSelect={() => addProcess(pt)}>
+                            <span className="font-mono text-xs mr-2">{pt.code}</span>
+                            {pt.name}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+            </div>
+
+            {formData.available_processes.length > 0 && (
+              <div className="space-y-2">
+                {formData.available_processes.map(proc => {
+                  const pt = processTypes.find(p => p.id === proc.process_type_id);
+                  return (
+                    <div key={proc.process_type_id} className="p-3 bg-violet-50 rounded-lg border border-violet-200">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Badge variant="outline" className="font-mono">{proc.process_code}</Badge>
+                        <span className="flex-1 font-medium text-sm">{proc.process_name}</span>
+                        <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => removeProcess(proc.process_type_id)}>
+                          <X className="w-4 h-4 text-red-600" />
+                        </Button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={proc.custom_price_per_unit || ''}
+                          onChange={(e) => updateProcess(proc.process_type_id, 'custom_price_per_unit', e.target.value ? parseFloat(e.target.value) : null)}
+                          placeholder={`Preço/Un (padrão: ${pt?.base_price_per_unit?.toFixed(2) || '0,00'})`}
+                          className="h-8 text-sm"
+                        />
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={proc.custom_setup_price || ''}
+                          onChange={(e) => updateProcess(proc.process_type_id, 'custom_setup_price', e.target.value ? parseFloat(e.target.value) : null)}
+                          placeholder={`Setup (padrão: ${pt?.setup_price?.toFixed(2) || '0,00'})`}
+                          className="h-8 text-sm"
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Sizes (Base x Altura) */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <Label className="flex items-center gap-2">
+                <Ruler className="w-4 h-4" />
+                Tamanhos (Base x Altura)
+              </Label>
+              <Button type="button" variant="outline" size="sm" onClick={addSize}>
+                <Plus className="w-4 h-4 mr-1" />
+                Adicionar
+              </Button>
+            </div>
+            {formData.sizes.map((size, index) => (
+              <div key={index} className="flex items-center gap-2 p-2 bg-slate-50 rounded-lg">
+                <Input
+                  value={size.name}
+                  onChange={(e) => updateSize(index, 'name', e.target.value)}
+                  placeholder="PP, P, M..."
+                  className="w-20"
+                />
+                <Input
+                  type="number"
+                  value={size.width}
+                  onChange={(e) => updateSize(index, 'width', parseFloat(e.target.value) || 0)}
+                  placeholder="Base cm"
+                  className="w-24"
+                />
+                <span className="text-slate-400">x</span>
+                <Input
+                  type="number"
+                  value={size.height}
+                  onChange={(e) => updateSize(index, 'height', parseFloat(e.target.value) || 0)}
+                  placeholder="Altura cm"
+                  className="w-24"
+                />
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={size.price_adjustment}
+                  onChange={(e) => updateSize(index, 'price_adjustment', parseFloat(e.target.value) || 0)}
+                  placeholder="+R$"
+                  className="w-20"
+                />
+                <Button type="button" variant="ghost" size="icon" onClick={() => removeSize(index)}>
+                  <X className="w-4 h-4 text-red-600" />
+                </Button>
+              </div>
+            ))}
+          </div>
+
+          {/* Switches */}
+          <div className="flex gap-6">
+            <div className="flex items-center gap-2">
+              <Switch checked={formData.is_active} onCheckedChange={(v) => setFormData({ ...formData, is_active: v })} />
+              <Label>Ativo</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch checked={formData.is_featured} onCheckedChange={(v) => setFormData({ ...formData, is_featured: v })} />
+              <Label>Destaque</Label>
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+            <Button type="submit" disabled={mutation.isPending}>
+              {mutation.isPending ? 'Salvando...' : 'Salvar'}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}

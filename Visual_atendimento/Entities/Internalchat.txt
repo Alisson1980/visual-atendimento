@@ -1,0 +1,58 @@
+{
+  "name": "InternalChat",
+  "type": "object",
+  "properties": {
+    "participants": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Emails dos participantes"
+    },
+    "participant_names": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Nomes dos participantes"
+    },
+    "chat_type": {
+      "type": "string",
+      "enum": [
+        "direct",
+        "development",
+        "group"
+      ],
+      "default": "direct",
+      "description": "Tipo do chat"
+    },
+    "reference_id": {
+      "type": "string",
+      "description": "ID do desenvolvimento vinculado (se houver)"
+    },
+    "reference_title": {
+      "type": "string",
+      "description": "T\u00edtulo de refer\u00eancia"
+    },
+    "last_message": {
+      "type": "string",
+      "description": "Preview da \u00faltima mensagem"
+    },
+    "last_message_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Data da \u00faltima mensagem"
+    },
+    "unread_by": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Usu\u00e1rios com mensagens n\u00e3o lidas"
+    }
+  },
+  "required": [
+    "participants",
+    "chat_type"
+  ]
+}

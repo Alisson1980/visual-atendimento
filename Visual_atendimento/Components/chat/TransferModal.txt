@@ -1,0 +1,242 @@
+import React, { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { 
+  ArrowRightLeft, 
+  User, 
+  Loader2,
+  Building2,
+  CheckCircle
+} from "lucide-react";
+
+const departmentLabels = {
+  sales: 'Vendas',
+  support: 'Suporte',
+  design: 'Design',
+  production: 'Produção',
+  finance: 'Financeiro',
+  management: 'Gerência'
+};
+
+const departmentColors = {
+  sales: 'bg-blue-100 text-blue-700',
+  support: 'bg-green-100 text-green-700',
+  design: 'bg-purple-100 text-purple-700',
+  production: 'bg-orange-100 text-orange-700',
+  finance: 'bg-emerald-100 text-emerald-700',
+  management: 'bg-slate-100 text-slate-700'
+};
+
+export default function TransferModal({ 
+  open, 
+  onOpenChange, 
+  conversation, 
+  currentUser,
+  onTransfer 
+}) {
+  const [transferType, setTransferType] = useState('user'); // 'user' or 'department'
+  const [selectedDepartment, setSelectedDepartment] = useState('');
+  const [selectedUser, setSelectedUser] = useState('');
+  const [reason, setReason] = useState('');
+  const [isTransferring, setIsTransferring] = useState(false);
+
+  // Load users
+  const { data: users = [] } = useQuery({
+    queryKey: ['users-available'],
+    queryFn: () => base44.entities.User.filter({ is_available: true }, 'full_name', 100),
+    enabled: open
+  });
+
+  // Filter users by department if selected
+  const filteredUsers = selectedDepartment 
+    ? users.filter(u => u.department === selectedDepartment && u.email !== currentUser?.email)
+    : users.filter(u => u.email !== currentUser?.email);
+
+  const handleTransfer = async () => {
+    setIsTransferring(true);
+    
+    const transferData = {
+      from_user: currentUser?.email,
+      from_department: currentUser?.department,
+      reason,
+      transferred_at: new Date().toISOString()
+    };
+
+    if (transferType === 'user' && selectedUser) {
+      const targetUser = users.find(u => u.email === selectedUser);
+      transferData.to_user = selectedUser;
+      transferData.to_department = targetUser?.department;
+    } else if (transferType === 'department' && selectedDepartment) {
+      transferData.to_department = selectedDepartment;
+      transferData.to_user = null; // Will be assigned by department
+    }
+
+    await onTransfer(transferData);
+    setIsTransferring(false);
+    onOpenChange(false);
+    setReason('');
+    setSelectedUser('');
+    setSelectedDepartment('');
+  };
+
+  const canTransfer = (transferType === 'user' && selectedUser) || 
+                      (transferType === 'department' && selectedDepartment);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <ArrowRightLeft className="w-5 h-5 text-blue-600" />
+            Transferir Atendimento
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          {/* Current conversation info */}
+          <div className="p-3 bg-slate-50 rounded-lg">
+            <p className="font-medium">{conversation?.customer_name}</p>
+            <p className="text-sm text-slate-500">{conversation?.customer_phone}</p>
+            {conversation?.classification && (
+              <Badge variant="outline" className="mt-2 text-xs">
+                {conversation.classification}
+              </Badge>
+            )}
+          </div>
+
+          {/* Transfer type */}
+          <div className="space-y-2">
+            <Label>Transferir para</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                type="button"
+                variant={transferType === 'user' ? 'default' : 'outline'}
+                onClick={() => setTransferType('user')}
+                className="justify-start"
+              >
+                <User className="w-4 h-4 mr-2" />
+                Usuário
+              </Button>
+              <Button
+                type="button"
+                variant={transferType === 'department' ? 'default' : 'outline'}
+                onClick={() => setTransferType('department')}
+                className="justify-start"
+              >
+                <Building2 className="w-4 h-4 mr-2" />
+                Setor
+              </Button>
+            </div>
+          </div>
+
+          {/* Department selection */}
+          <div className="space-y-2">
+            <Label>Setor {transferType === 'department' ? '*' : '(filtrar)'}</Label>
+            <Select value={selectedDepartment} onValueChange={setSelectedDepartment}>
+              <SelectTrigger>
+                <SelectValue placeholder="Selecione o setor" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={null}>Todos os setores</SelectItem>
+                {Object.entries(departmentLabels).map(([key, label]) => (
+                  <SelectItem key={key} value={key}>
+                    <div className="flex items-center gap-2">
+                      <Badge className={departmentColors[key]}>{label}</Badge>
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* User selection (if transferring to user) */}
+          {transferType === 'user' && (
+            <div className="space-y-2">
+              <Label>Atendente *</Label>
+              <Select value={selectedUser} onValueChange={setSelectedUser}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione o atendente" />
+                </SelectTrigger>
+                <SelectContent>
+                  {filteredUsers.length === 0 ? (
+                    <div className="p-2 text-center text-sm text-slate-500">
+                      Nenhum atendente disponível
+                    </div>
+                  ) : (
+                    filteredUsers.map(user => (
+                      <SelectItem key={user.id} value={user.email}>
+                        <div className="flex items-center gap-2">
+                          <div className={`w-2 h-2 rounded-full ${user.status === 'online' ? 'bg-green-500' : 'bg-slate-300'}`} />
+                          <span>{user.full_name}</span>
+                          {user.department && (
+                            <Badge className={`${departmentColors[user.department]} text-xs`}>
+                              {departmentLabels[user.department]}
+                            </Badge>
+                          )}
+                          <span className="text-xs text-slate-400">
+                            ({user.current_conversations || 0}/{user.max_conversations || 5})
+                          </span>
+                        </div>
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {/* Reason */}
+          <div className="space-y-2">
+            <Label>Motivo da transferência</Label>
+            <Textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Descreva o motivo da transferência..."
+              rows={3}
+            />
+          </div>
+
+          {/* Actions */}
+          <div className="flex gap-3 pt-4">
+            <Button 
+              variant="outline" 
+              className="flex-1"
+              onClick={() => onOpenChange(false)}
+            >
+              Cancelar
+            </Button>
+            <Button 
+              className="flex-1 bg-blue-600 hover:bg-blue-700"
+              onClick={handleTransfer}
+              disabled={!canTransfer || isTransferring}
+            >
+              {isTransferring ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <CheckCircle className="w-4 h-4 mr-2" />
+              )}
+              Transferir
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}

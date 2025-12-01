@@ -1,0 +1,140 @@
+{
+  "name": "ClientReference",
+  "type": "object",
+  "properties": {
+    "reference_code": {
+      "type": "string",
+      "description": "C\u00f3digo exclusivo (ex: 96001-CLI001)"
+    },
+    "customer_id": {
+      "type": "string"
+    },
+    "customer_name": {
+      "type": "string"
+    },
+    "base_product_id": {
+      "type": "string"
+    },
+    "base_product_code": {
+      "type": "string"
+    },
+    "base_product_name": {
+      "type": "string"
+    },
+    "main_image": {
+      "type": "string"
+    },
+    "images": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "selected_sizes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "width": {
+            "type": "number"
+          },
+          "height": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "selected_processes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "process_type_id": {
+            "type": "string"
+          },
+          "process_code": {
+            "type": "string"
+          },
+          "process_name": {
+            "type": "string"
+          },
+          "colors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "position": {
+                  "type": "number",
+                  "description": "Cor 1, Cor 2, etc"
+                },
+                "color_name": {
+                  "type": "string",
+                  "description": "Ex: Azul"
+                },
+                "pantone": {
+                  "type": "string",
+                  "description": "Ex: Pantone 286C"
+                }
+              }
+            }
+          },
+          "artwork_url": {
+            "type": "string"
+          },
+          "unit_price": {
+            "type": "number"
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "unit_price": {
+      "type": "number"
+    },
+    "price_breakdown": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "value": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "pending_approval",
+        "approved",
+        "active",
+        "inactive"
+      ],
+      "default": "draft"
+    },
+    "approved_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "development_id": {
+      "type": "string"
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "reference_code",
+    "customer_id",
+    "base_product_id"
+  ]
+}

@@ -1,0 +1,235 @@
+import React, { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { 
+  Search, 
+  Activity,
+  Plus,
+  Edit,
+  Trash2,
+  CheckCircle2,
+  XCircle,
+  ArrowRightLeft,
+  Upload,
+  Download,
+  Eye,
+  LogIn,
+  RefreshCw,
+  User,
+  Calendar
+} from "lucide-react";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
+
+const actionConfig = {
+  create: { label: 'Criação', icon: Plus, color: 'bg-emerald-100 text-emerald-700' },
+  update: { label: 'Atualização', icon: Edit, color: 'bg-blue-100 text-blue-700' },
+  delete: { label: 'Exclusão', icon: Trash2, color: 'bg-red-100 text-red-700' },
+  approve: { label: 'Aprovação', icon: CheckCircle2, color: 'bg-green-100 text-green-700' },
+  reject: { label: 'Rejeição', icon: XCircle, color: 'bg-orange-100 text-orange-700' },
+  transfer: { label: 'Transferência', icon: ArrowRightLeft, color: 'bg-violet-100 text-violet-700' },
+  upload: { label: 'Upload', icon: Upload, color: 'bg-cyan-100 text-cyan-700' },
+  download: { label: 'Download', icon: Download, color: 'bg-slate-100 text-slate-700' },
+  view: { label: 'Visualização', icon: Eye, color: 'bg-slate-100 text-slate-700' },
+  login: { label: 'Login', icon: LogIn, color: 'bg-amber-100 text-amber-700' },
+  status_change: { label: 'Mudança Status', icon: RefreshCw, color: 'bg-purple-100 text-purple-700' }
+};
+
+const entityLabels = {
+  development: 'Desenvolvimento',
+  order: 'Pedido',
+  product: 'Produto',
+  customer: 'Cliente',
+  conversation: 'Conversa',
+  artwork: 'Arte',
+  customization: 'Personalização'
+};
+
+export default function ActivityLogs() {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [actionFilter, setActionFilter] = useState('all');
+  const [entityFilter, setEntityFilter] = useState('all');
+  const [page, setPage] = useState(0);
+  const pageSize = 50;
+
+  // Load logs
+  const { data: logs = [], isLoading } = useQuery({
+    queryKey: ['activity-logs', page],
+    queryFn: () => base44.entities.ActivityLog.list('-created_date', 500)
+  });
+
+  // Filter logs
+  const filteredLogs = logs.filter(log => {
+    const matchesSearch = !searchTerm ||
+      log.user_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      log.user_email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      log.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      log.entity_name?.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    const matchesAction = actionFilter === 'all' || log.action_type === actionFilter;
+    const matchesEntity = entityFilter === 'all' || log.entity_type === entityFilter;
+    
+    return matchesSearch && matchesAction && matchesEntity;
+  });
+
+  const paginatedLogs = filteredLogs.slice(page * pageSize, (page + 1) * pageSize);
+  const totalPages = Math.ceil(filteredLogs.length / pageSize);
+
+  return (
+    <div className="min-h-screen bg-slate-50 p-6">
+      <div className="max-w-7xl mx-auto space-y-6">
+        {/* Header */}
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Histórico de Atividades</h1>
+          <p className="text-slate-500">Registro completo de ações no sistema</p>
+        </div>
+
+        {/* Filters */}
+        <Card className="border-0 shadow-sm">
+          <CardContent className="p-4">
+            <div className="flex flex-col md:flex-row gap-4">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Input
+                  placeholder="Buscar por usuário, descrição..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+              
+              <Select value={actionFilter} onValueChange={setActionFilter}>
+                <SelectTrigger className="w-full md:w-48">
+                  <SelectValue placeholder="Ação" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas ações</SelectItem>
+                  {Object.entries(actionConfig).map(([key, config]) => (
+                    <SelectItem key={key} value={key}>{config.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select value={entityFilter} onValueChange={setEntityFilter}>
+                <SelectTrigger className="w-full md:w-48">
+                  <SelectValue placeholder="Entidade" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas entidades</SelectItem>
+                  {Object.entries(entityLabels).map(([key, label]) => (
+                    <SelectItem key={key} value={key}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Logs */}
+        <Card className="border-0 shadow-sm">
+          {isLoading ? (
+            <CardContent className="p-6">
+              <div className="animate-pulse space-y-4">
+                {[1, 2, 3, 4, 5].map(i => (
+                  <div key={i} className="h-16 bg-slate-100 rounded-lg" />
+                ))}
+              </div>
+            </CardContent>
+          ) : filteredLogs.length === 0 ? (
+            <CardContent className="p-12 text-center">
+              <Activity className="w-12 h-12 mx-auto text-slate-300 mb-4" />
+              <p className="text-slate-500">Nenhuma atividade registrada</p>
+            </CardContent>
+          ) : (
+            <>
+              <div className="divide-y divide-slate-100">
+                {paginatedLogs.map(log => {
+                  const ActionIcon = actionConfig[log.action_type]?.icon || Activity;
+                  return (
+                    <div key={log.id} className="p-4 hover:bg-slate-50 transition-colors">
+                      <div className="flex items-start gap-4">
+                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${actionConfig[log.action_type]?.color.split(' ')[0] || 'bg-slate-100'}`}>
+                          <ActionIcon className="w-5 h-5" />
+                        </div>
+                        
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
+                            <Badge className={actionConfig[log.action_type]?.color}>
+                              {actionConfig[log.action_type]?.label || log.action_type}
+                            </Badge>
+                            {log.entity_type && (
+                              <Badge variant="outline">
+                                {entityLabels[log.entity_type] || log.entity_type}
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-slate-900">{log.description}</p>
+                          {log.entity_name && (
+                            <p className="text-sm text-slate-500">
+                              Registro: {log.entity_name}
+                            </p>
+                          )}
+                          <div className="flex items-center gap-4 mt-2 text-xs text-slate-400">
+                            <span className="flex items-center gap-1">
+                              <User className="w-3 h-3" />
+                              {log.user_name || log.user_email}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Calendar className="w-3 h-3" />
+                              {format(new Date(log.created_date), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                            </span>
+                            {log.ip_address && (
+                              <span>IP: {log.ip_address}</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="p-4 border-t flex items-center justify-between">
+                  <p className="text-sm text-slate-500">
+                    Mostrando {page * pageSize + 1} - {Math.min((page + 1) * pageSize, filteredLogs.length)} de {filteredLogs.length}
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPage(p => Math.max(0, p - 1))}
+                      disabled={page === 0}
+                    >
+                      Anterior
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                      disabled={page >= totalPages - 1}
+                    >
+                      Próximo
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </Card>
+      </div>
+    </div>
+  );
+}

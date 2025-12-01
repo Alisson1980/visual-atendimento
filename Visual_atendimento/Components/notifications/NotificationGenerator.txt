@@ -1,0 +1,184 @@
+import { useEffect, useRef } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+
+export default function NotificationGenerator() {
+  const queryClient = useQueryClient();
+  const lastCheckRef = useRef(new Date());
+
+  // Carregar dados necessários
+  const { data: products = [] } = useQuery({
+    queryKey: ['products-check'],
+    queryFn: () => base44.entities.Product.list('-created_date', 200),
+    refetchInterval: 60000
+  });
+
+  const { data: orders = [] } = useQuery({
+    queryKey: ['orders-check'],
+    queryFn: () => base44.entities.Order.list('-created_date', 100),
+    refetchInterval: 60000
+  });
+
+  const { data: conversations = [] } = useQuery({
+    queryKey: ['conversations-check'],
+    queryFn: () => base44.entities.Conversation.list('-last_message_at', 100),
+    refetchInterval: 30000
+  });
+
+  const { data: existingNotifications = [] } = useQuery({
+    queryKey: ['existing-notifications'],
+    queryFn: () => base44.entities.Notification.list('-created_date', 200),
+    refetchInterval: 60000
+  });
+
+  // Criar notificação
+  const createNotificationMutation = useMutation({
+    mutationFn: (data) => base44.entities.Notification.create(data),
+    onSuccess: () => queryClient.invalidateQueries(['notifications'])
+  });
+
+  // Verificar se já existe notificação similar não lida
+  const notificationExists = (type, referenceId) => {
+    return existingNotifications.some(n => 
+      n.type === type && 
+      n.reference_id === referenceId && 
+      !n.is_read
+    );
+  };
+
+  useEffect(() => {
+    const checkAndCreateNotifications = async () => {
+      // 1. Verificar estoque baixo
+      const lowStockProducts = products.filter(p => 
+        p.is_active && p.stock_quantity <= (p.min_stock || 5)
+      );
+
+      for (const product of lowStockProducts) {
+        if (!notificationExists('low_stock', product.id)) {
+          const isUrgent = product.stock_quantity === 0;
+          createNotificationMutation.mutate({
+            type: 'low_stock',
+            title: isUrgent ? `Produto sem estoque!` : `Estoque baixo: ${product.name}`,
+            message: isUrgent 
+              ? `${product.name} está sem estoque. Reposição urgente necessária.`
+              : `${product.name} tem apenas ${product.stock_quantity} unidades (mín: ${product.min_stock || 5})`,
+            priority: isUrgent ? 'urgent' : 'high',
+            reference_id: product.id,
+            reference_type: 'product',
+            for_role: 'all',
+            action_url: 'Products',
+            metadata: { 
+              product_name: product.name,
+              current_stock: product.stock_quantity,
+              min_stock: product.min_stock || 5
+            }
+          });
+        }
+      }
+
+      // 2. Verificar pedidos pendentes há mais de 24h
+      const now = new Date();
+      const pendingOrders = orders.filter(o => {
+        if (o.status !== 'pending') return false;
+        const orderDate = new Date(o.created_date);
+        const hoursDiff = (now - orderDate) / (1000 * 60 * 60);
+        return hoursDiff > 24;
+      });
+
+      for (const order of pendingOrders) {
+        if (!notificationExists('pending_order', order.id)) {
+          const orderDate = new Date(order.created_date);
+          const hoursDiff = Math.floor((now - orderDate) / (1000 * 60 * 60));
+          
+          createNotificationMutation.mutate({
+            type: 'pending_order',
+            title: `Pedido pendente há ${hoursDiff}h`,
+            message: `Pedido #${order.order_number || order.id?.slice(-6)} de ${order.customer_name} está aguardando há mais de 24 horas.`,
+            priority: hoursDiff > 48 ? 'urgent' : 'high',
+            reference_id: order.id,
+            reference_type: 'order',
+            for_role: 'all',
+            action_url: 'Orders',
+            metadata: {
+              order_number: order.order_number,
+              customer_name: order.customer_name,
+              hours_pending: hoursDiff
+            }
+          });
+        }
+      }
+
+      // 3. Verificar conversas aguardando atendimento
+      const waitingConversations = conversations.filter(c => 
+        c.status === 'waiting' || 
+        (c.status === 'ai_handling' && c.ai_confidence && c.ai_confidence < 70)
+      );
+
+      for (const conv of waitingConversations) {
+        if (!notificationExists('waiting_conversation', conv.id)) {
+          const isLowConfidence = conv.status === 'ai_handling' && conv.ai_confidence < 70;
+          
+          createNotificationMutation.mutate({
+            type: 'waiting_conversation',
+            title: isLowConfidence 
+              ? `IA precisa de ajuda`
+              : `Nova conversa aguardando`,
+            message: isLowConfidence
+              ? `Conversa com ${conv.customer_name || conv.customer_phone} - IA com ${conv.ai_confidence}% de confiança`
+              : `${conv.customer_name || conv.customer_phone} está aguardando atendimento`,
+            priority: conv.priority === 'urgent' ? 'urgent' : conv.priority === 'high' ? 'high' : 'normal',
+            reference_id: conv.id,
+            reference_type: 'conversation',
+            for_role: 'all',
+            action_url: `Conversations?id=${conv.id}`,
+            metadata: {
+              customer_name: conv.customer_name,
+              customer_phone: conv.customer_phone,
+              ai_confidence: conv.ai_confidence
+            }
+          });
+        }
+      }
+
+      // 4. Verificar leads qualificados pela IA
+      const qualifiedLeads = conversations.filter(c => 
+        c.status === 'ai_handling' && 
+        c.classification === 'order' && 
+        c.ai_confidence && c.ai_confidence >= 80
+      );
+
+      for (const lead of qualifiedLeads) {
+        if (!notificationExists('qualified_lead', lead.id)) {
+          createNotificationMutation.mutate({
+            type: 'qualified_lead',
+            title: `Lead qualificado para venda`,
+            message: `${lead.customer_name || lead.customer_phone} demonstrou interesse em compra. Confiança da IA: ${lead.ai_confidence}%`,
+            priority: 'high',
+            reference_id: lead.id,
+            reference_type: 'conversation',
+            for_role: 'all',
+            action_url: `Conversations?id=${lead.id}`,
+            metadata: {
+              customer_name: lead.customer_name,
+              customer_phone: lead.customer_phone,
+              classification: lead.classification,
+              ai_confidence: lead.ai_confidence
+            }
+          });
+        }
+      }
+
+      lastCheckRef.current = new Date();
+    };
+
+    // Executar verificação a cada 60 segundos
+    const interval = setInterval(checkAndCreateNotifications, 60000);
+    
+    // Executar imediatamente na montagem
+    checkAndCreateNotifications();
+
+    return () => clearInterval(interval);
+  }, [products, orders, conversations, existingNotifications]);
+
+  return null; // Componente invisível
+}

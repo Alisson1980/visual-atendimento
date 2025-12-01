@@ -1,0 +1,407 @@
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { 
+  Search, 
+  Plus, 
+  Package, 
+  Grid3X3, 
+  List,
+  Settings,
+  Palette,
+  Layers,
+  Edit,
+  Trash2,
+  Copy
+} from "lucide-react";
+import ProductFormModal from '@/components/products/ProductFormModal';
+
+export default function Products() {
+  const queryClient = useQueryClient();
+  const [searchTerm, setSearchTerm] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [viewMode, setViewMode] = useState('grid');
+  const [showProductModal, setShowProductModal] = useState(false);
+  const [editingProduct, setEditingProduct] = useState(null);
+
+  // Load products
+  const { data: products = [], isLoading } = useQuery({
+    queryKey: ['products'],
+    queryFn: () => base44.entities.Product.list('-created_date', 200),
+  });
+
+  // Load categories
+  const { data: categories = [] } = useQuery({
+    queryKey: ['categories'],
+    queryFn: () => base44.entities.Category.list('order', 100),
+  });
+
+  // Load collections
+  const { data: collections = [] } = useQuery({
+    queryKey: ['collections'],
+    queryFn: () => base44.entities.Collection.filter({ is_active: true }, 'order', 100),
+  });
+
+  // Delete mutation
+  const deleteMutation = useMutation({
+    mutationFn: (id) => base44.entities.Product.delete(id),
+    onSuccess: () => queryClient.invalidateQueries(['products'])
+  });
+
+  // Duplicate mutation
+  const duplicateMutation = useMutation({
+    mutationFn: async (product) => {
+      const { id, created_date, updated_date, created_by, ...data } = product;
+      return base44.entities.Product.create({
+        ...data,
+        reference_code: `${data.reference_code}-COPIA`,
+        name: `${data.name} (Cópia)`
+      });
+    },
+    onSuccess: () => queryClient.invalidateQueries(['products'])
+  });
+
+  // Filter products
+  const filteredProducts = products.filter(product => {
+    const matchesSearch = !searchTerm || 
+      product.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      product.reference_code?.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesCategory = categoryFilter === 'all' || product.category_id === categoryFilter;
+    return matchesSearch && matchesCategory;
+  });
+
+  const handleOpenModal = (product = null) => {
+    setEditingProduct(product);
+    setShowProductModal(true);
+  };
+
+  const getProcessCount = (product) => {
+    return product.available_processes?.length || 0;
+  };
+
+  const getMaterialCount = (product) => {
+    return product.materials?.length || 0;
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 p-6">
+      <div className="max-w-7xl mx-auto space-y-6">
+        {/* Header */}
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Mostruário de Produtos</h1>
+            <p className="text-slate-500">{products.length} produtos cadastrados</p>
+          </div>
+          <Button onClick={() => handleOpenModal()} className="bg-slate-800 hover:bg-slate-700">
+            <Plus className="w-4 h-4 mr-2" />
+            Novo Produto
+          </Button>
+        </div>
+
+        {/* Stats */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <Card className="border-0 shadow-sm">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-100 rounded-lg">
+                  <Package className="w-5 h-5 text-blue-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">{products.length}</p>
+                  <p className="text-sm text-slate-500">Total</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-0 shadow-sm">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-emerald-100 rounded-lg">
+                  <Layers className="w-5 h-5 text-emerald-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">
+                    {products.reduce((acc, p) => acc + getProcessCount(p), 0)}
+                  </p>
+                  <p className="text-sm text-slate-500">Processos</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-0 shadow-sm">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-violet-100 rounded-lg">
+                  <Palette className="w-5 h-5 text-violet-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">
+                    {products.filter(p => p.is_featured).length}
+                  </p>
+                  <p className="text-sm text-slate-500">Destaques</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-0 shadow-sm">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-amber-100 rounded-lg">
+                  <Settings className="w-5 h-5 text-amber-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">{categories.length}</p>
+                  <p className="text-sm text-slate-500">Categorias</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Filters */}
+        <Card className="border-0 shadow-sm">
+          <CardContent className="p-4">
+            <div className="flex flex-col md:flex-row gap-4">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Input
+                  placeholder="Buscar por nome ou código de referência..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+              
+              <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                <SelectTrigger className="w-full md:w-48">
+                  <SelectValue placeholder="Categoria" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas categorias</SelectItem>
+                  {categories.map(cat => (
+                    <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <div className="flex gap-2">
+                <Button
+                  variant={viewMode === 'grid' ? 'default' : 'outline'}
+                  size="icon"
+                  onClick={() => setViewMode('grid')}
+                >
+                  <Grid3X3 className="w-4 h-4" />
+                </Button>
+                <Button
+                  variant={viewMode === 'list' ? 'default' : 'outline'}
+                  size="icon"
+                  onClick={() => setViewMode('list')}
+                >
+                  <List className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Products Grid */}
+        {isLoading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            {[1, 2, 3, 4, 5, 6, 7, 8].map(i => (
+              <Card key={i} className="animate-pulse border-0 shadow-sm">
+                <div className="aspect-square bg-slate-200" />
+                <CardContent className="p-4 space-y-3">
+                  <div className="h-4 bg-slate-200 rounded w-3/4" />
+                  <div className="h-3 bg-slate-200 rounded w-1/2" />
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        ) : filteredProducts.length === 0 ? (
+          <Card className="border-0 shadow-sm">
+            <CardContent className="p-12 text-center">
+              <Package className="w-12 h-12 mx-auto text-slate-300 mb-4" />
+              <p className="text-slate-500">Nenhum produto encontrado</p>
+              <Button variant="outline" className="mt-4" onClick={() => handleOpenModal()}>
+                <Plus className="w-4 h-4 mr-2" />
+                Adicionar produto
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className={viewMode === 'grid' 
+            ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
+            : "space-y-4"
+          }>
+            {filteredProducts.map(product => (
+              <Card key={product.id} className="border-0 shadow-sm hover:shadow-lg transition-all group overflow-hidden">
+                {viewMode === 'grid' ? (
+                  <>
+                    <div className="aspect-square bg-slate-100 relative overflow-hidden flex items-center justify-center">
+                      {product.images?.[0] ? (
+                        <img 
+                          src={product.images[0]} 
+                          alt={product.name}
+                          className="w-full h-full object-contain p-2 group-hover:scale-105 transition-transform duration-300"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center">
+                          <Package className="w-16 h-16 text-slate-300" />
+                        </div>
+                      )}
+                      
+                      {/* Badges */}
+                      <div className="absolute top-3 left-3 flex flex-col gap-2">
+                        <Badge className="bg-slate-900 text-white font-mono">
+                          {product.reference_code}
+                        </Badge>
+                        {product.is_featured && (
+                          <Badge className="bg-amber-500 text-white">Destaque</Badge>
+                        )}
+                      </div>
+
+                      {/* Process count */}
+                      {getProcessCount(product) > 0 && (
+                        <Badge className="absolute top-3 right-3 bg-violet-600 text-white">
+                          {getProcessCount(product)} processo(s)
+                        </Badge>
+                      )}
+                      
+                      {/* Quick actions */}
+                      <div className="absolute bottom-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Button size="icon" variant="secondary" className="h-8 w-8" onClick={() => handleOpenModal(product)}>
+                          <Edit className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                    
+                    <CardContent className="p-4">
+                      <h3 className="font-semibold text-slate-900 truncate">
+                        {collections.find(c => c.id === product.collection_id)?.name || 'Sem coleção'}
+                      </h3>
+                      <p className="text-lg font-bold text-slate-900 mt-1">
+                        R$ {product.base_price?.toFixed(2)}
+                      </p>
+                      <p className="text-xs text-slate-500">Mín: {product.min_order_quantity || 100} un.</p>
+                      
+                      {/* Show processes and materials */}
+                      <div className="flex flex-wrap gap-1 mt-3">
+                        {product.available_processes?.slice(0, 3).map((proc, idx) => (
+                          <span key={idx} className="text-xs px-2 py-1 bg-violet-100 text-violet-700 rounded-full">
+                            {proc.process_code}
+                          </span>
+                        ))}
+                        {product.materials?.slice(0, 2).map((mat, idx) => (
+                          <span key={idx} className="text-xs px-2 py-1 bg-amber-100 text-amber-700 rounded-full">
+                            {mat.material_code}
+                          </span>
+                        ))}
+                      </div>
+
+                      <div className="flex gap-2 mt-4">
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="flex-1"
+                          onClick={() => handleOpenModal(product)}
+                        >
+                          <Edit className="w-4 h-4 mr-1" />
+                          Editar
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="icon"
+                          onClick={() => duplicateMutation.mutate(product)}
+                        >
+                          <Copy className="w-4 h-4" />
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="icon"
+                          className="text-red-600"
+                          onClick={() => deleteMutation.mutate(product.id)}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </>
+                ) : (
+                  <CardContent className="p-4 flex items-center gap-4">
+                    <div className="w-20 h-20 rounded-lg bg-slate-100 overflow-hidden flex-shrink-0">
+                      {product.images?.[0] ? (
+                        <img src={product.images[0]} alt={product.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center">
+                          <Package className="w-8 h-8 text-slate-300" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="font-mono">{product.reference_code}</Badge>
+                        <h3 className="font-semibold text-slate-900 truncate">
+                          {collections.find(c => c.id === product.collection_id)?.name || 'Sem coleção'}
+                        </h3>
+                      </div>
+                      <p className="text-lg font-bold text-slate-900">R$ {product.base_price?.toFixed(2)}</p>
+                      <div className="flex gap-1 mt-1">
+                        {product.available_processes?.slice(0, 3).map((proc, idx) => (
+                          <span key={idx} className="text-xs px-2 py-0.5 bg-violet-100 text-violet-700 rounded">
+                            {proc.process_code}
+                          </span>
+                        ))}
+                        {product.materials?.slice(0, 2).map((mat, idx) => (
+                          <span key={idx} className="text-xs px-2 py-0.5 bg-amber-100 text-amber-700 rounded">
+                            {mat.material_code}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" onClick={() => handleOpenModal(product)}>
+                        <Edit className="w-4 h-4 mr-1" />
+                        Editar
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => duplicateMutation.mutate(product)}>
+                        <Copy className="w-4 h-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="text-red-600" onClick={() => deleteMutation.mutate(product.id)}>
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </CardContent>
+                )}
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Product Form Modal */}
+      <ProductFormModal
+        open={showProductModal}
+        onOpenChange={setShowProductModal}
+        product={editingProduct}
+        categories={categories}
+        collections={collections}
+        onSuccess={() => {
+          queryClient.invalidateQueries(['products']);
+          setShowProductModal(false);
+          setEditingProduct(null);
+        }}
+      />
+    </div>
+  );
+}

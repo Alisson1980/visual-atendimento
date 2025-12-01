@@ -1,0 +1,171 @@
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { 
+  Tag, 
+  Plus, 
+  X, 
+  Check,
+  Loader2
+} from "lucide-react";
+
+export default function TagsManager({ conversationId, currentTags = [], onUpdate }) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [newTagName, setNewTagName] = useState('');
+  const [selectedTags, setSelectedTags] = useState(currentTags);
+
+  const { data: availableTags = [] } = useQuery({
+    queryKey: ['conversation-tags'],
+    queryFn: () => base44.entities.ConversationTag.filter({ is_active: true }, 'name', 50),
+    enabled: open
+  });
+
+  const createTag = useMutation({
+    mutationFn: (data) => base44.entities.ConversationTag.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['conversation-tags']);
+      setNewTagName('');
+    }
+  });
+
+  const updateConversation = useMutation({
+    mutationFn: (tags) => base44.entities.Conversation.update(conversationId, { tags }),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['conversations']);
+      if (onUpdate) onUpdate(selectedTags);
+    }
+  });
+
+  const handleToggleTag = (tagName) => {
+    const newTags = selectedTags.includes(tagName)
+      ? selectedTags.filter(t => t !== tagName)
+      : [...selectedTags, tagName];
+    setSelectedTags(newTags);
+  };
+
+  const handleSave = () => {
+    updateConversation.mutate(selectedTags);
+    setOpen(false);
+  };
+
+  const handleCreateTag = () => {
+    if (!newTagName.trim()) return;
+    const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4'];
+    const randomColor = colors[Math.floor(Math.random() * colors.length)];
+    createTag.mutate({ name: newTagName.trim(), color: randomColor });
+  };
+
+  const getTagColor = (tagName) => {
+    const tag = availableTags.find(t => t.name === tagName);
+    return tag?.color || '#64748B';
+  };
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="sm" className="h-7 text-xs gap-1">
+          <Tag className="w-3 h-3" />
+          Tags
+          {currentTags.length > 0 && (
+            <Badge variant="secondary" className="ml-1 h-4 px-1 text-xs">
+              {currentTags.length}
+            </Badge>
+          )}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-64 p-3" align="start">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="font-medium text-sm">Gerenciar Tags</h4>
+          </div>
+
+          {/* Current tags */}
+          {selectedTags.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {selectedTags.map((tag, idx) => (
+                <Badge 
+                  key={idx} 
+                  style={{ backgroundColor: getTagColor(tag) + '20', color: getTagColor(tag), borderColor: getTagColor(tag) }}
+                  className="text-xs cursor-pointer hover:opacity-80"
+                  onClick={() => handleToggleTag(tag)}
+                >
+                  {tag}
+                  <X className="w-3 h-3 ml-1" />
+                </Badge>
+              ))}
+            </div>
+          )}
+
+          {/* Available tags */}
+          <div className="space-y-1">
+            <p className="text-xs text-slate-500">Tags disponíveis:</p>
+            <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto">
+              {availableTags
+                .filter(t => !selectedTags.includes(t.name))
+                .map(tag => (
+                  <Badge
+                    key={tag.id}
+                    variant="outline"
+                    style={{ borderColor: tag.color, color: tag.color }}
+                    className="text-xs cursor-pointer hover:opacity-80"
+                    onClick={() => handleToggleTag(tag.name)}
+                  >
+                    <Plus className="w-3 h-3 mr-1" />
+                    {tag.name}
+                  </Badge>
+                ))}
+            </div>
+          </div>
+
+          {/* Create new tag */}
+          <div className="flex gap-1">
+            <Input
+              value={newTagName}
+              onChange={(e) => setNewTagName(e.target.value)}
+              placeholder="Nova tag..."
+              className="h-7 text-xs"
+              onKeyPress={(e) => e.key === 'Enter' && handleCreateTag()}
+            />
+            <Button 
+              size="sm" 
+              variant="outline" 
+              onClick={handleCreateTag}
+              disabled={!newTagName.trim() || createTag.isPending}
+              className="h-7 px-2"
+            >
+              {createTag.isPending ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <Plus className="w-3 h-3" />
+              )}
+            </Button>
+          </div>
+
+          {/* Save button */}
+          <Button 
+            size="sm" 
+            className="w-full"
+            onClick={handleSave}
+            disabled={updateConversation.isPending}
+          >
+            {updateConversation.isPending ? (
+              <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+            ) : (
+              <Check className="w-4 h-4 mr-1" />
+            )}
+            Salvar
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}

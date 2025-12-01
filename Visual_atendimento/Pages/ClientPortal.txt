@@ -1,0 +1,317 @@
+import React, { useState, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { 
+  Package, 
+  FileText, 
+  Clock, 
+  CheckCircle2, 
+  AlertCircle,
+  ChevronRight,
+  LogOut,
+  User,
+  ShoppingBag
+} from "lucide-react";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
+import ClientCatalog from '@/components/client-portal/ClientCatalog';
+import ClientDevelopments from '@/components/client-portal/ClientDevelopments';
+import ClientOrders from '@/components/client-portal/ClientOrders';
+
+const LOGO_URL = "https://qtrypzzcjebvfcihiynt.supabase.co/storage/v1/object/public/base44-prod/public/69260470b8978dee91937d1a/9d2ceea12_Logos-VisualImpretexedesign.png";
+
+const statusColors = {
+  pending: 'bg-amber-100 text-amber-700',
+  in_development: 'bg-blue-100 text-blue-700',
+  awaiting_approval: 'bg-violet-100 text-violet-700',
+  revision_requested: 'bg-orange-100 text-orange-700',
+  approved: 'bg-emerald-100 text-emerald-700',
+  production: 'bg-cyan-100 text-cyan-700',
+  completed: 'bg-green-100 text-green-700',
+  cancelled: 'bg-red-100 text-red-700'
+};
+
+const statusLabels = {
+  pending: 'Pendente',
+  in_development: 'Em Desenvolvimento',
+  awaiting_approval: 'Aguardando Aprovação',
+  revision_requested: 'Revisão Solicitada',
+  approved: 'Aprovado',
+  production: 'Em Produção',
+  completed: 'Concluído',
+  cancelled: 'Cancelado'
+};
+
+export default function ClientPortal() {
+  const [activeTab, setActiveTab] = useState('catalog');
+  const queryClient = useQueryClient();
+  
+  // Get access token from URL
+  const urlParams = new URLSearchParams(window.location.search);
+  const accessToken = urlParams.get('token');
+  
+  // Verify client access
+  const { data: accessData, isLoading: loadingAccess, error: accessError } = useQuery({
+    queryKey: ['client-access', accessToken],
+    queryFn: async () => {
+      if (!accessToken) throw new Error('Token não fornecido');
+      const accesses = await base44.entities.ClientAccess.filter({ access_token: accessToken });
+      if (accesses.length === 0) throw new Error('Acesso não encontrado');
+      const access = accesses[0];
+      if (!access.is_active) throw new Error('Acesso desativado');
+      // Update last access
+      await base44.entities.ClientAccess.update(access.id, { last_access: new Date().toISOString() });
+      return access;
+    },
+    enabled: !!accessToken,
+    retry: false
+  });
+
+  // Load developments for this customer
+  const { data: developments = [] } = useQuery({
+    queryKey: ['client-developments', accessData?.customer_id],
+    queryFn: () => base44.entities.DevelopmentRequest.filter(
+      { customer_id: accessData.customer_id },
+      '-created_date'
+    ),
+    enabled: !!accessData?.customer_id
+  });
+
+  // Load customer data for address
+  const { data: customerData } = useQuery({
+    queryKey: ['customer-data', accessData?.customer_id],
+    queryFn: async () => {
+      const customers = await base44.entities.Customer.filter({ id: accessData.customer_id });
+      return customers[0];
+    },
+    enabled: !!accessData?.customer_id
+  });
+
+  // Load artwork versions for all developments
+  const { data: allArtworkVersions = [] } = useQuery({
+    queryKey: ['all-artwork-versions', accessData?.customer_id],
+    queryFn: async () => {
+      const devIds = developments.map(d => d.id);
+      if (devIds.length === 0) return [];
+      const allVersions = await Promise.all(
+        devIds.map(id => 
+          base44.entities.ArtworkVersion.filter({ development_id: id }, '-version_number', 1)
+        )
+      );
+      return allVersions.flat();
+    },
+    enabled: developments.length > 0
+  });
+
+  // Load categories (only active ones)
+  const { data: categories = [] } = useQuery({
+    queryKey: ['client-categories'],
+    queryFn: () => base44.entities.Category.filter({ is_active: true }, 'order'),
+    enabled: !!accessData
+  });
+
+  // Load products
+  const { data: allProducts = [] } = useQuery({
+    queryKey: ['client-products'],
+    queryFn: () => base44.entities.Product.filter({ is_active: true }, 'name'),
+    enabled: !!accessData
+  });
+
+  // Filter products: only show products from active categories (or products without category)
+  const activeCategoryIds = categories.map(c => c.id);
+  const products = allProducts.filter(p => !p.category_id || activeCategoryIds.includes(p.category_id));
+
+  // Stats
+  const pendingApproval = developments.filter(d => d.status === 'awaiting_approval').length;
+  const inProgress = developments.filter(d => ['pending', 'in_development'].includes(d.status)).length;
+  const completed = developments.filter(d => d.status === 'completed').length;
+
+  if (!accessToken) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center p-6">
+        <Card className="max-w-md w-full border-0 shadow-xl">
+          <CardContent className="p-8 text-center">
+            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <AlertCircle className="w-8 h-8 text-red-500" />
+            </div>
+            <h2 className="text-xl font-bold text-slate-900 mb-2">Acesso Restrito</h2>
+            <p className="text-slate-500">
+              Você precisa de um link de acesso válido para visualizar seu painel.
+              Entre em contato com a equipe para obter seu link exclusivo.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (loadingAccess) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center">
+        <div className="animate-spin w-8 h-8 border-4 border-slate-300 border-t-slate-800 rounded-full" />
+      </div>
+    );
+  }
+
+  if (accessError) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center p-6">
+        <Card className="max-w-md w-full border-0 shadow-xl">
+          <CardContent className="p-8 text-center">
+            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <AlertCircle className="w-8 h-8 text-red-500" />
+            </div>
+            <h2 className="text-xl font-bold text-slate-900 mb-2">Acesso Inválido</h2>
+            <p className="text-slate-500">{accessError.message}</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-50">
+      {/* Header */}
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            <div className="flex items-center gap-4">
+              <img src={LOGO_URL} alt="Visual Etiquetas" className="h-8" />
+            </div>
+            
+            <div className="flex items-center gap-4">
+              <div className="hidden sm:flex items-center gap-2 text-sm text-slate-600">
+                <User className="w-4 h-4" />
+                <span>{accessData?.customer_name}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-3 sm:py-6">
+        {/* Welcome + Stats compact */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+          <div>
+            <h1 className="text-xl sm:text-2xl font-bold text-slate-900">
+              Olá, {accessData?.customer_name?.split(' ')[0]}!
+            </h1>
+            <p className="text-sm text-slate-500">Bem-vindo ao seu painel</p>
+          </div>
+          
+          {/* Stats inline */}
+          <div className="flex gap-2 sm:gap-3">
+            <div className="flex items-center gap-2 px-3 py-2 bg-violet-50 rounded-lg">
+              <Clock className="w-4 h-4 text-violet-600" />
+              <span className="font-bold text-violet-900">{pendingApproval}</span>
+              <span className="text-xs text-violet-600 hidden sm:inline">Aprovação</span>
+            </div>
+            <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 rounded-lg">
+              <Package className="w-4 h-4 text-blue-600" />
+              <span className="font-bold text-blue-900">{inProgress}</span>
+              <span className="text-xs text-blue-600 hidden sm:inline">Em desenv.</span>
+            </div>
+            <div className="flex items-center gap-2 px-3 py-2 bg-emerald-50 rounded-lg">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              <span className="font-bold text-emerald-900">{completed}</span>
+              <span className="text-xs text-emerald-600 hidden sm:inline">Concluídos</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Alert for pending approvals */}
+        {pendingApproval > 0 && (
+          <div className="flex items-center gap-3 p-3 bg-violet-50 border border-violet-200 rounded-lg mb-4">
+            <AlertCircle className="w-5 h-5 text-violet-600 flex-shrink-0" />
+            <p className="flex-1 text-sm text-violet-800">
+              <span className="font-medium">{pendingApproval}</span> {pendingApproval === 1 ? 'item aguardando' : 'itens aguardando'} aprovação
+            </p>
+            <Button 
+              size="sm"
+              onClick={() => setActiveTab('developments')}
+              className="bg-violet-600 hover:bg-violet-700 h-8 px-3"
+            >
+              Ver
+            </Button>
+          </div>
+        )}
+
+        {/* Tabs */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+          <TabsList className="bg-slate-100 p-1 rounded-lg w-full sm:w-auto">
+            <TabsTrigger 
+              value="catalog" 
+              className="rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm px-3 sm:px-4 text-xs sm:text-sm"
+            >
+              <Package className="w-4 h-4 mr-1 sm:mr-2" />
+              Catálogo
+            </TabsTrigger>
+            <TabsTrigger 
+              value="developments"
+              className="rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm px-3 sm:px-4 text-xs sm:text-sm"
+            >
+              <FileText className="w-4 h-4 mr-1 sm:mr-2" />
+              Personalizados
+              {pendingApproval > 0 && (
+                <Badge className="ml-1 bg-violet-500 text-white border-0 text-xs h-5 min-w-5 flex items-center justify-center">
+                  {pendingApproval}
+                </Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger 
+              value="orders"
+              className="rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm px-3 sm:px-4 text-xs sm:text-sm"
+            >
+              <ShoppingBag className="w-4 h-4 mr-1 sm:mr-2" />
+              Pedidos
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="catalog">
+            <ClientCatalog 
+              products={products} 
+              categories={categories}
+              customerId={accessData?.customer_id}
+              customerName={accessData?.customer_name}
+              customerEmail={accessData?.customer_email}
+            />
+          </TabsContent>
+
+          <TabsContent value="developments">
+            <ClientDevelopments 
+              developments={developments}
+              customerId={accessData?.customer_id}
+              customerData={customerData}
+              allArtworkVersions={allArtworkVersions}
+            />
+          </TabsContent>
+
+          <TabsContent value="orders">
+            <ClientOrders 
+              customerId={accessData?.customer_id}
+              developments={developments}
+              customerData={customerData}
+              allArtworkVersions={allArtworkVersions}
+            />
+          </TabsContent>
+        </Tabs>
+      </main>
+
+      {/* Footer */}
+      <footer className="bg-white border-t border-slate-200 mt-16">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+            <img src={LOGO_URL} alt="Visual Etiquetas" className="h-6 opacity-50" />
+            <p className="text-sm text-slate-400">
+              © {new Date().getFullYear()} Visual Etiquetas. Painel exclusivo do cliente.
+            </p>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}

@@ -1,0 +1,674 @@
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { 
+  Search, 
+  Package, 
+  ChevronRight,
+  Check,
+  Upload,
+  X,
+  Loader2,
+  AlertCircle,
+  Palette,
+  Settings,
+  Layers,
+  Filter
+} from "lucide-react";
+
+export default function ClientCatalog({ products, customerId, customerName, customerEmail, categories = [] }) {
+  const queryClient = useQueryClient();
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [selectedProduct, setSelectedProduct] = useState(null);
+  const [showRequestModal, setShowRequestModal] = useState(false);
+  const [formData, setFormData] = useState({
+    quantity: 100,
+    description: '',
+    customizations: {},
+    selectedProcesses: [],
+    selectedMaterials: [],
+    reference_files: []
+  });
+  const [uploading, setUploading] = useState(false);
+
+  // Load customizations for selected product
+  const { data: customizations = [] } = useQuery({
+    queryKey: ['product-customizations', selectedProduct?.id],
+    queryFn: () => base44.entities.ProductCustomization.filter(
+      { product_id: selectedProduct.id },
+      'order'
+    ),
+    enabled: !!selectedProduct?.id
+  });
+
+  // Load materials for colors
+  const { data: allMaterials = [] } = useQuery({
+    queryKey: ['materials'],
+    queryFn: () => base44.entities.Material.filter({ is_active: true }, 'order', 100)
+  });
+
+  // Load process types
+  const { data: processTypes = [] } = useQuery({
+    queryKey: ['process-types'],
+    queryFn: () => base44.entities.ProcessType.filter({ is_active: true }, 'order', 100)
+  });
+
+  // Load customer for code generation
+  const { data: customerFullData } = useQuery({
+    queryKey: ['customer-full', customerId],
+    queryFn: async () => {
+      const customers = await base44.entities.Customer.filter({ id: customerId });
+      return customers[0];
+    },
+    enabled: !!customerId
+  });
+
+  // Create development request
+  const createRequest = useMutation({
+    mutationFn: async (data) => {
+      // Generate reference code: ABC-00001
+      let customerCode = customerFullData?.code;
+      let nextNumber = customerFullData?.next_model_number || 1;
+
+      // If customer doesn't have a code, generate from name
+      if (!customerCode && customerName) {
+        customerCode = customerName.substring(0, 3).toUpperCase().replace(/[^A-Z]/g, 'X');
+        // Update customer with code
+        await base44.entities.Customer.update(customerId, { code: customerCode });
+      }
+
+      const referenceCode = `${customerCode || 'XXX'}-${String(nextNumber).padStart(5, '0')}`;
+
+      // Update customer's next model number
+      await base44.entities.Customer.update(customerId, { next_model_number: nextNumber + 1 });
+      
+      // Get process details
+      const selectedProcessDetails = data.selectedProcesses.map(procId => {
+        const prodProc = selectedProduct.available_processes?.find(p => p.process_type_id === procId);
+        const pt = processTypes.find(p => p.id === procId);
+        return {
+          process_type_id: procId,
+          process_code: prodProc?.process_code || pt?.code,
+          process_name: prodProc?.process_name || pt?.name,
+          price_per_unit: prodProc?.custom_price_per_unit || pt?.base_price_per_unit || 0,
+          setup_price: prodProc?.custom_setup_price || pt?.setup_price || 0
+        };
+      });
+
+      // Get material details with colors
+      const selectedMaterialDetails = data.selectedMaterials.map(mat => {
+        const material = allMaterials.find(m => m.id === mat.material_id);
+        return {
+          material_id: mat.material_id,
+          material_code: material?.code,
+          material_name: material?.name,
+          display_name: material?.display_name || material?.name,
+          selected_color: mat.selected_color,
+          quantity_per_unit: 1
+        };
+      });
+
+      return base44.entities.DevelopmentRequest.create({
+        reference_code: referenceCode,
+        request_number: referenceCode, // Keep for backward compatibility
+        customer_id: customerId,
+        customer_code: customerCode,
+        customer_name: customerName,
+        customer_email: customerEmail,
+        product_id: selectedProduct.id,
+        product_name: selectedProduct.name,
+        main_image: selectedProduct.images?.[0],
+        product_base_price: selectedProduct.base_price,
+        min_order_quantity: selectedProduct.min_order_quantity || 100,
+        quantity: data.quantity,
+        description: data.description,
+        reference_files: data.reference_files,
+        selected_processes: selectedProcessDetails,
+        selected_materials: selectedMaterialDetails,
+        customizations: Object.entries(data.customizations).map(([type, value]) => {
+          const cust = customizations.find(c => c.customization_type === type);
+          const option = cust?.options?.find(o => o.value === value);
+          return {
+            type,
+            name: cust?.name,
+            selected_value: value,
+            selected_label: option?.label || value
+          };
+        }),
+        status: 'pending'
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['client-developments']);
+      setShowRequestModal(false);
+      setSelectedProduct(null);
+      setFormData({ quantity: 100, description: '', customizations: {}, selectedProcesses: [], selectedMaterials: [], reference_files: [] });
+    }
+  });
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setUploading(true);
+    const { file_url } = await base44.integrations.Core.UploadFile({ file });
+    setFormData(prev => ({
+      ...prev,
+      reference_files: [...prev.reference_files, file_url]
+    }));
+    setUploading(false);
+  };
+
+  const removeFile = (index) => {
+    setFormData(prev => ({
+      ...prev,
+      reference_files: prev.reference_files.filter((_, i) => i !== index)
+    }));
+  };
+
+  const handleOpenRequest = (product) => {
+    setSelectedProduct(product);
+    setFormData({ 
+      quantity: product.min_order_quantity || 1, 
+      description: '', 
+      customizations: {}, 
+      selectedProcesses: [],
+      selectedMaterials: [],
+      reference_files: [] 
+    });
+    setShowRequestModal(true);
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const qty = typeof formData.quantity === 'number' ? formData.quantity : parseInt(formData.quantity) || 0;
+    if (qty < (selectedProduct.min_order_quantity || 1)) {
+      return;
+    }
+    createRequest.mutate({ ...formData, quantity: qty });
+  };
+
+  const toggleProcess = (processId) => {
+    setFormData(prev => ({
+      ...prev,
+      selectedProcesses: prev.selectedProcesses.includes(processId)
+        ? prev.selectedProcesses.filter(id => id !== processId)
+        : [...prev.selectedProcesses, processId]
+    }));
+  };
+
+  const toggleMaterial = (materialId) => {
+    setFormData(prev => {
+      const exists = prev.selectedMaterials.find(m => m.material_id === materialId);
+      if (exists) {
+        return {
+          ...prev,
+          selectedMaterials: prev.selectedMaterials.filter(m => m.material_id !== materialId)
+        };
+      }
+      return {
+        ...prev,
+        selectedMaterials: [...prev.selectedMaterials, { material_id: materialId, selected_color: '' }]
+      };
+    });
+  };
+
+  const setMaterialColor = (materialId, color) => {
+    setFormData(prev => ({
+      ...prev,
+      selectedMaterials: prev.selectedMaterials.map(m => 
+        m.material_id === materialId ? { ...m, selected_color: color } : m
+      )
+    }));
+  };
+
+  const filteredProducts = products.filter(p => {
+    const matchesSearch = !searchTerm || 
+      p.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      p.reference_code?.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesCategory = selectedCategory === 'all' || p.category_id === selectedCategory;
+    return matchesSearch && matchesCategory;
+  });
+
+  // Get materials for selected product
+  const productMaterials = selectedProduct?.materials?.map(pm => {
+    const material = allMaterials.find(m => m.id === pm.material_id);
+    return material ? { ...pm, ...material } : null;
+  }).filter(Boolean) || [];
+
+  const minQuantity = selectedProduct?.min_order_quantity || 1;
+  const quantityNum = typeof formData.quantity === 'number' ? formData.quantity : parseInt(formData.quantity) || 0;
+  const isQuantityValid = quantityNum >= minQuantity;
+
+  return (
+    <div className="space-y-6">
+      {/* Search and Filters */}
+      <div className="flex flex-col md:flex-row gap-4">
+        <div className="relative flex-1">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+          <Input
+            placeholder="Buscar produtos..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-12 h-12 text-lg border-slate-200 rounded-xl"
+          />
+        </div>
+        {categories.length > 0 && (
+          <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+            <SelectTrigger className="w-full md:w-56 h-12 rounded-xl">
+              <Filter className="w-4 h-4 mr-2" />
+              <SelectValue placeholder="Categoria" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todas as categorias</SelectItem>
+              {categories.map(cat => (
+                <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+      </div>
+
+      {/* Products Grid */}
+      {filteredProducts.length === 0 ? (
+        <Card className="border-0 shadow-sm">
+          <CardContent className="p-12 text-center">
+            <Package className="w-16 h-16 text-slate-200 mx-auto mb-4" />
+            <p className="text-slate-500">Nenhum produto encontrado</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filteredProducts.map(product => (
+            <Card 
+              key={product.id} 
+              className="group border-0 shadow-sm hover:shadow-lg transition-all duration-300 overflow-hidden cursor-pointer"
+              onClick={() => handleOpenRequest(product)}
+            >
+              <div className="aspect-square bg-slate-100 relative overflow-hidden flex items-center justify-center">
+                {product.images?.[0] ? (
+                  <img 
+                    src={product.images[0]} 
+                    alt={product.name}
+                    className="w-full h-full object-contain p-2 group-hover:scale-105 transition-transform duration-300"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <Package className="w-16 h-16 text-slate-300" />
+                  </div>
+                )}
+                {product.is_featured && (
+                  <Badge className="absolute top-3 left-3 bg-amber-500 text-white border-0">
+                    Destaque
+                  </Badge>
+                )}
+                <Badge className="absolute top-3 right-3 bg-slate-900 text-white font-mono">
+                  {product.reference_code}
+                </Badge>
+              </div>
+              <CardContent className="p-4">
+                <h3 className="font-semibold text-slate-900 group-hover:text-violet-600 transition-colors">
+                  {product.name}
+                </h3>
+                <div className="flex items-center justify-between mt-2">
+                  <div>
+                    <span className="text-lg font-bold text-slate-900">
+                      R$ {product.base_price?.toFixed(2)}
+                    </span>
+                    <p className="text-xs text-slate-500">Mín: {product.min_order_quantity || 100} un.</p>
+                  </div>
+                  <Button 
+                    size="sm" 
+                    className="bg-slate-900 hover:bg-slate-800"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenRequest(product);
+                    }}
+                  >
+                    Personalizar
+                    <ChevronRight className="w-4 h-4 ml-1" />
+                  </Button>
+                </div>
+                {/* Show processes and materials count */}
+                <div className="flex gap-2 mt-3">
+                  {product.available_processes?.length > 0 && (
+                    <Badge variant="outline" className="text-xs">
+                      <Settings className="w-3 h-3 mr-1" />
+                      {product.available_processes.length} processos
+                    </Badge>
+                  )}
+                  {product.materials?.length > 0 && (
+                    <Badge variant="outline" className="text-xs">
+                      <Layers className="w-3 h-3 mr-1" />
+                      {product.materials.length} materiais
+                    </Badge>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Request Modal */}
+      <Dialog open={showRequestModal} onOpenChange={setShowRequestModal}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Solicitar Desenvolvimento</DialogTitle>
+            <DialogDescription>
+              Personalize o produto e envie sua solicitação
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedProduct && (
+            <form onSubmit={handleSubmit} className="space-y-6">
+              {/* Product Info */}
+              <div className="flex gap-4 p-4 bg-slate-50 rounded-xl">
+                {selectedProduct.images?.[0] ? (
+                  <img 
+                    src={selectedProduct.images[0]} 
+                    alt={selectedProduct.name}
+                    className="w-20 h-20 object-cover rounded-lg"
+                  />
+                ) : (
+                  <div className="w-20 h-20 bg-slate-200 rounded-lg flex items-center justify-center">
+                    <Package className="w-8 h-8 text-slate-400" />
+                  </div>
+                )}
+                <div className="flex-1">
+                  <h3 className="font-semibold text-slate-900">{selectedProduct.name}</h3>
+                  <p className="text-sm text-slate-500">Ref: {selectedProduct.reference_code}</p>
+                  <div className="flex items-center gap-4 mt-2">
+                    <p className="text-lg font-bold text-slate-900">
+                      R$ {selectedProduct.base_price?.toFixed(2)}
+                    </p>
+                    <Badge className="bg-amber-100 text-amber-700">
+                      Mín: {minQuantity} un.
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+
+              {/* Available Processes */}
+              {selectedProduct.available_processes?.length > 0 && (
+                <div className="space-y-3">
+                  <Label className="flex items-center gap-2">
+                    <Settings className="w-4 h-4 text-violet-500" />
+                    Processos Disponíveis
+                  </Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {selectedProduct.available_processes.map(proc => {
+                      const pt = processTypes.find(p => p.id === proc.process_type_id);
+                      const isSelected = formData.selectedProcesses.includes(proc.process_type_id);
+                      return (
+                        <div
+                          key={proc.process_type_id}
+                          className={`p-3 rounded-lg border cursor-pointer transition-all ${
+                            isSelected 
+                              ? 'border-violet-500 bg-violet-50' 
+                              : 'border-slate-200 hover:border-slate-300'
+                          }`}
+                          onClick={() => toggleProcess(proc.process_type_id)}
+                        >
+                          <div className="flex items-center gap-2">
+                            <Checkbox 
+                              checked={isSelected} 
+                              onCheckedChange={() => toggleProcess(proc.process_type_id)}
+                            />
+                            <div>
+                              <p className="font-medium text-sm">{proc.process_name}</p>
+                              <p className="text-xs text-slate-500">
+                                R$ {(proc.custom_price_per_unit || pt?.base_price_per_unit || 0).toFixed(2)}/un
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Materials with Color Selection */}
+              {productMaterials.length > 0 && (
+                <div className="space-y-3">
+                  <Label className="flex items-center gap-2">
+                    <Palette className="w-4 h-4 text-amber-500" />
+                    Materiais e Cores
+                  </Label>
+                  <div className="space-y-3">
+                    {productMaterials.map(material => {
+                      const selected = formData.selectedMaterials.find(m => m.material_id === material.id);
+                      const isSelected = !!selected;
+                      return (
+                        <div
+                          key={material.id}
+                          className={`p-4 rounded-lg border transition-all ${
+                            isSelected 
+                              ? 'border-amber-500 bg-amber-50' 
+                              : 'border-slate-200'
+                          }`}
+                        >
+                          <div 
+                            className="flex items-center gap-2 cursor-pointer"
+                            onClick={() => toggleMaterial(material.id)}
+                          >
+                            <Checkbox 
+                              checked={isSelected} 
+                              onCheckedChange={() => toggleMaterial(material.id)}
+                            />
+                            <div className="flex-1">
+                              <p className="font-medium">{material.display_name || material.name}</p>
+                              <p className="text-xs text-slate-500">Ref: {material.code}</p>
+                            </div>
+                          </div>
+                          
+                          {/* Color variants */}
+                          {isSelected && material.color_variants?.length > 0 && (
+                            <div className="mt-3 pt-3 border-t border-amber-200">
+                              <Label className="text-xs text-amber-700 mb-2 block">Selecione a cor:</Label>
+                              <div className="flex flex-wrap gap-2">
+                                {material.color_variants.filter(c => c.is_available !== false).map((color, idx) => (
+                                  <button
+                                    key={idx}
+                                    type="button"
+                                    onClick={() => setMaterialColor(material.id, color.color_name)}
+                                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-all ${
+                                      selected?.selected_color === color.color_name
+                                        ? 'border-amber-500 bg-white ring-2 ring-amber-200'
+                                        : 'border-slate-200 hover:border-slate-300'
+                                    }`}
+                                  >
+                                    <div 
+                                      className="w-5 h-5 rounded-full border"
+                                      style={{ backgroundColor: color.color_code }}
+                                    />
+                                    <span className="text-sm">{color.color_name}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Customizations */}
+              {customizations.length > 0 && (
+                <div className="space-y-4">
+                  <h4 className="font-semibold text-slate-900">Personalizações</h4>
+                  {customizations.map(cust => (
+                    <div key={cust.id} className="space-y-2">
+                      <Label className="flex items-center gap-2">
+                        {cust.name}
+                        {cust.is_required && (
+                          <Badge variant="outline" className="text-xs">Obrigatório</Badge>
+                        )}
+                      </Label>
+                      <Select
+                        value={formData.customizations[cust.customization_type] || ''}
+                        onValueChange={(value) => setFormData(prev => ({
+                          ...prev,
+                          customizations: {
+                            ...prev.customizations,
+                            [cust.customization_type]: value
+                          }
+                        }))}
+                        required={cust.is_required}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder={`Selecione`} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {cust.options?.map((option, idx) => (
+                            <SelectItem key={idx} value={option.value}>
+                              {option.label}
+                              {option.price_adjustment > 0 && (
+                                <span className="text-slate-500 ml-2">
+                                  (+R$ {option.price_adjustment.toFixed(2)})
+                                </span>
+                              )}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Quantity */}
+              <div className="space-y-2">
+                <Label>Quantidade</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={formData.quantity}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    // Allow empty string or any number during typing
+                    setFormData({ ...formData, quantity: val === '' ? '' : parseInt(val) || 0 });
+                  }}
+                  onBlur={(e) => {
+                    // On blur, ensure minimum quantity
+                    const val = parseInt(e.target.value) || 0;
+                    if (val < minQuantity) {
+                      setFormData({ ...formData, quantity: minQuantity });
+                    }
+                  }}
+                  className={`w-40 ${!isQuantityValid ? 'border-red-500' : ''}`}
+                />
+                {!isQuantityValid && (
+                  <p className="text-xs text-red-500 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />
+                    Quantidade mínima: {minQuantity} unidades
+                  </p>
+                )}
+              </div>
+
+              {/* Description */}
+              <div className="space-y-2">
+                <Label>Descrição / Observações</Label>
+                <Textarea
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  placeholder="Descreva detalhes adicionais, referências, especificações..."
+                  rows={4}
+                />
+              </div>
+
+              {/* Reference Files */}
+              <div className="space-y-2">
+                <Label>Arquivos de Referência</Label>
+                <div className="flex flex-wrap gap-3">
+                  {formData.reference_files.map((url, index) => (
+                    <div key={index} className="relative w-20 h-20 rounded-lg overflow-hidden border">
+                      <img src={url} alt="" className="w-full h-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => removeFile(index)}
+                        className="absolute top-1 right-1 p-1 bg-red-500 rounded-full text-white"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                  <label className="w-20 h-20 rounded-lg border-2 border-dashed border-slate-300 flex items-center justify-center cursor-pointer hover:border-slate-400 transition-colors">
+                    {uploading ? (
+                      <Loader2 className="w-5 h-5 text-slate-400 animate-spin" />
+                    ) : (
+                      <Upload className="w-5 h-5 text-slate-400" />
+                    )}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleFileUpload}
+                      disabled={uploading}
+                    />
+                  </label>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Envie logos, artes ou imagens de referência
+                </p>
+              </div>
+
+              {/* Actions */}
+              <div className="flex justify-end gap-3 pt-4 border-t">
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={() => setShowRequestModal(false)}
+                >
+                  Cancelar
+                </Button>
+                <Button 
+                  type="submit"
+                  disabled={createRequest.isPending || !isQuantityValid}
+                  className="bg-violet-600 hover:bg-violet-700"
+                >
+                  {createRequest.isPending ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Enviando...
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4 mr-2" />
+                      Enviar Solicitação
+                    </>
+                  )}
+                </Button>
+              </div>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

@@ -1,0 +1,112 @@
+{
+  "name": "AutomationRule",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Nome da regra"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "assignment",
+        "auto_reply",
+        "notification",
+        "tag"
+      ],
+      "description": "Tipo de automa\u00e7\u00e3o"
+    },
+    "trigger": {
+      "type": "string",
+      "enum": [
+        "keyword",
+        "classification",
+        "priority",
+        "inactivity",
+        "new_conversation"
+      ],
+      "description": "Gatilho da regra"
+    },
+    "conditions": {
+      "type": "object",
+      "properties": {
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "classifications": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "priorities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "inactivity_minutes": {
+          "type": "number"
+        },
+        "channel": {
+          "type": "string"
+        }
+      },
+      "description": "Condi\u00e7\u00f5es para ativar a regra"
+    },
+    "actions": {
+      "type": "object",
+      "properties": {
+        "assign_to_department": {
+          "type": "string"
+        },
+        "assign_to_user": {
+          "type": "string"
+        },
+        "send_message": {
+          "type": "string"
+        },
+        "set_priority": {
+          "type": "string"
+        },
+        "add_tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "notify_users": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "notify_department": {
+          "type": "string"
+        }
+      },
+      "description": "A\u00e7\u00f5es a executar"
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true
+    },
+    "priority": {
+      "type": "number",
+      "default": 0,
+      "description": "Ordem de execu\u00e7\u00e3o (maior = primeiro)"
+    },
+    "execution_count": {
+      "type": "number",
+      "default": 0
+    }
+  },
+  "required": [
+    "name",
+    "type",
+    "trigger"
+  ]
+}

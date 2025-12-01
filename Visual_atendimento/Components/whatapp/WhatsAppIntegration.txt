@@ -1,0 +1,457 @@
+import React, { useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { 
+  MessageCircle, 
+  Send, 
+  CheckCircle2, 
+  AlertCircle,
+  Loader2,
+  Phone,
+  Link as LinkIcon
+} from "lucide-react";
+
+// WhatsApp Icon
+const WhatsAppIcon = ({ className }) => (
+  <svg viewBox="0 0 24 24" className={className} fill="currentColor">
+    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+  </svg>
+);
+
+// Send WhatsApp message
+export async function sendWhatsAppMessage(to, message) {
+  try {
+    const response = await base44.integrations.Core.InvokeLLM({
+      prompt: `
+        Simule o envio de uma mensagem WhatsApp.
+        Para: ${to}
+        Mensagem: ${message}
+        
+        Retorne um objeto JSON com:
+        - success: true
+        - message_id: um ID único simulado
+        - timestamp: a data/hora atual
+      `,
+      response_json_schema: {
+        type: "object",
+        properties: {
+          success: { type: "boolean" },
+          message_id: { type: "string" },
+          timestamp: { type: "string" }
+        }
+      }
+    });
+    return response;
+  } catch (error) {
+    console.error('WhatsApp send error:', error);
+    throw error;
+  }
+}
+
+// Process incoming WhatsApp message (webhook simulation)
+export async function processIncomingWhatsApp(from, message, customerName = null) {
+  // Check if conversation exists
+  const existingConversations = await base44.entities.Conversation.filter({
+    customer_phone: from,
+    status: { $nin: ['archived'] }
+  }, '-created_date', 1);
+
+  let conversation;
+  let isNew = false;
+
+  if (existingConversations.length > 0) {
+    conversation = existingConversations[0];
+  } else {
+    // Create new conversation
+    isNew = true;
+    
+    // Try to find customer
+    const customers = await base44.entities.Customer.filter({ phone: from }, '-created_date', 1);
+    const customer = customers[0];
+
+    conversation = await base44.entities.Conversation.create({
+      customer_id: customer?.id,
+      customer_name: customerName || customer?.name || from,
+      customer_phone: from,
+      channel: 'whatsapp',
+      status: 'ai_handling',
+      priority: 'normal',
+      message_count: 0,
+      unread_count: 0
+    });
+  }
+
+  // Create message
+  const newMessage = await base44.entities.Message.create({
+    conversation_id: conversation.id,
+    content: message,
+    sender_type: 'customer',
+    sender_name: conversation.customer_name,
+    message_type: 'text',
+    status: 'delivered'
+  });
+
+  // Update conversation
+  await base44.entities.Conversation.update(conversation.id, {
+    last_message: message,
+    last_message_at: new Date().toISOString(),
+    last_message_sender: 'customer',
+    unread_count: (conversation.unread_count || 0) + 1,
+    message_count: (conversation.message_count || 0) + 1
+  });
+
+  // Process automation rules
+  await processAutomationRules(conversation, message, isNew);
+
+  // Generate AI response if conversation is in ai_handling mode
+  const updatedConv = await base44.entities.Conversation.filter({ id: conversation.id }, '-created_date', 1);
+  if (updatedConv[0]?.status === 'ai_handling') {
+    await generateAIResponse(updatedConv[0], message);
+  }
+
+  return { conversation: updatedConv[0] || conversation, isNew };
+}
+
+// Generate AI response for customer message
+async function generateAIResponse(conversation, customerMessage) {
+  try {
+    // Get conversation history
+    const messages = await base44.entities.Message.filter(
+      { conversation_id: conversation.id },
+      'created_date',
+      10
+    );
+
+    const history = messages.map(m => 
+      `${m.sender_type === 'customer' ? 'Cliente' : 'Assistente'}: ${m.content}`
+    ).join('\n');
+
+    // Generate response using LLM
+    const response = await base44.integrations.Core.InvokeLLM({
+      prompt: `Você é um assistente virtual da Visual Etiquetas, uma empresa que fabrica etiquetas personalizadas, tags, adesivos e materiais promocionais.
+
+Histórico da conversa:
+${history}
+
+Última mensagem do cliente: "${customerMessage}"
+
+Responda de forma amigável, profissional e útil. Seja breve e objetivo. 
+Se o cliente perguntar sobre produtos, mencione que vocês trabalham com:
+- Etiquetas tecidas e estampadas
+- Tags para roupas
+- Adesivos personalizados
+- Materiais promocionais
+
+Se precisar de mais detalhes para um orçamento, pergunte sobre:
+- Tipo de produto desejado
+- Quantidade
+- Tamanho aproximado
+- Se tem arte pronta
+
+Responda em português brasileiro.`,
+      response_json_schema: {
+        type: "object",
+        properties: {
+          response: { type: "string" }
+        }
+      }
+    });
+
+    const aiMessage = response.response;
+
+    // Create AI message
+    await base44.entities.Message.create({
+      conversation_id: conversation.id,
+      content: aiMessage,
+      sender_type: 'ai',
+      sender_name: 'Assistente Virtual',
+      message_type: 'text',
+      status: 'sent'
+    });
+
+    // Update conversation
+    await base44.entities.Conversation.update(conversation.id, {
+      last_message: aiMessage,
+      last_message_at: new Date().toISOString(),
+      last_message_sender: 'ai',
+      message_count: (conversation.message_count || 0) + 1
+    });
+
+  } catch (error) {
+    console.error('Error generating AI response:', error);
+  }
+}
+
+// Process automation rules for incoming messages
+async function processAutomationRules(conversation, messageContent, isNewConversation) {
+  try {
+    // Load active automation rules
+    const rules = await base44.entities.AutomationRule.filter({ is_active: true }, '-priority', 50);
+    
+    const textToAnalyze = messageContent.toLowerCase();
+    
+    for (const rule of rules) {
+      let matches = false;
+
+      // Check trigger conditions
+      switch (rule.trigger) {
+        case 'keyword':
+          if (rule.conditions?.keywords?.length > 0) {
+            matches = rule.conditions.keywords.some(kw => 
+              textToAnalyze.includes(kw.toLowerCase())
+            );
+          }
+          break;
+
+        case 'classification':
+          if (rule.conditions?.classifications?.length > 0) {
+            matches = rule.conditions.classifications.includes(conversation.classification);
+          }
+          break;
+
+        case 'new_conversation':
+          matches = isNewConversation;
+          break;
+      }
+
+      // Check channel condition if specified
+      if (matches && rule.conditions?.channel) {
+        matches = conversation.channel === rule.conditions.channel;
+      }
+
+      if (matches) {
+        console.log(`Automation rule matched: ${rule.name}`);
+        await executeAutomationActions(rule, conversation);
+      }
+    }
+  } catch (error) {
+    console.error('Error processing automation rules:', error);
+  }
+}
+
+// Execute automation rule actions
+async function executeAutomationActions(rule, conversation) {
+  const actions = rule.actions || {};
+  const updates = {};
+
+  // Assignment actions
+  if (actions.assign_to_department) {
+    updates.assigned_department = actions.assign_to_department;
+    updates.status = 'pending_transfer';
+  }
+
+  if (actions.assign_to_user) {
+    updates.assigned_to = actions.assign_to_user;
+    updates.status = 'human_handling';
+  }
+
+  // Priority action
+  if (actions.set_priority) {
+    updates.priority = actions.set_priority;
+  }
+
+  // Tags action
+  if (actions.add_tags?.length > 0) {
+    const existingTags = conversation.tags || [];
+    updates.tags = [...new Set([...existingTags, ...actions.add_tags])];
+  }
+
+  // Update conversation if there are changes
+  if (Object.keys(updates).length > 0) {
+    await base44.entities.Conversation.update(conversation.id, updates);
+  }
+
+  // Send auto-reply
+  if (actions.send_message) {
+    await base44.entities.Message.create({
+      conversation_id: conversation.id,
+      content: actions.send_message,
+      sender_type: 'ai',
+      sender_name: 'Assistente Virtual',
+      message_type: 'text',
+      status: 'sent'
+    });
+
+    await base44.entities.Conversation.update(conversation.id, {
+      last_message: actions.send_message,
+      last_message_at: new Date().toISOString(),
+      last_message_sender: 'ai'
+    });
+  }
+
+  // Create notifications
+  if (actions.notify_users?.length > 0) {
+    for (const userEmail of actions.notify_users) {
+      await base44.entities.Notification.create({
+        type: 'waiting_conversation',
+        title: `Automação: ${rule.name}`,
+        message: `Conversa de ${conversation.customer_name} acionou a regra "${rule.name}"`,
+        reference_id: conversation.id,
+        reference_type: 'conversation',
+        for_user: userEmail,
+        priority: conversation.priority || 'normal',
+        action_url: `Conversations?id=${conversation.id}`
+      });
+    }
+  }
+
+  if (actions.notify_department) {
+    await base44.entities.Notification.create({
+      type: 'waiting_conversation',
+      title: `Automação: ${rule.name}`,
+      message: `Conversa de ${conversation.customer_name} requer atenção do setor ${actions.notify_department}`,
+      reference_id: conversation.id,
+      reference_type: 'conversation',
+      priority: 'high',
+      action_url: `Conversations?id=${conversation.id}`
+    });
+  }
+
+  // Increment execution count
+  await base44.entities.AutomationRule.update(rule.id, {
+    execution_count: (rule.execution_count || 0) + 1
+  });
+}
+
+// Send client portal access link
+export async function sendPortalAccessLink(phone, customerName, accessToken) {
+  const portalUrl = `${window.location.origin}/ClientPortal?token=${accessToken}`;
+  
+  const message = `Olá ${customerName}! 👋
+
+Seu cadastro foi realizado com sucesso na Visual Etiquetas!
+
+Acesse seu painel exclusivo para:
+✅ Ver catálogo de produtos
+✅ Acompanhar desenvolvimentos
+✅ Consultar pedidos
+
+🔗 Acesse aqui: ${portalUrl}
+
+Este link é pessoal e intransferível.
+Dúvidas? Responda esta mensagem!`;
+
+  return sendWhatsAppMessage(phone, message);
+}
+
+// Component to show WhatsApp status
+export function WhatsAppStatus({ phone, showSendLink = false, customerId, customerName }) {
+  const queryClient = useQueryClient();
+  const [showLinkModal, setShowLinkModal] = useState(false);
+
+  const sendLinkMutation = useMutation({
+    mutationFn: async () => {
+      // Get or create access token
+      let access = await base44.entities.ClientAccess.filter({ customer_id: customerId }, '-created_date', 1);
+      
+      if (access.length === 0) {
+        const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
+        access = [await base44.entities.ClientAccess.create({
+          customer_id: customerId,
+          customer_name: customerName,
+          customer_phone: phone,
+          access_token: token,
+          is_active: true
+        })];
+      }
+
+      return sendPortalAccessLink(phone, customerName, access[0].access_token);
+    },
+    onSuccess: () => {
+      setShowLinkModal(false);
+      queryClient.invalidateQueries(['client-access']);
+    }
+  });
+
+  if (!phone) return null;
+
+  return (
+    <>
+      <div className="flex items-center gap-2">
+        <Badge variant="outline" className="text-green-600 border-green-300 bg-green-50">
+          <WhatsAppIcon className="w-3 h-3 mr-1" />
+          {phone}
+        </Badge>
+        {showSendLink && customerId && (
+          <Button 
+            size="sm" 
+            variant="ghost" 
+            className="h-6 text-xs text-green-600"
+            onClick={() => setShowLinkModal(true)}
+          >
+            <LinkIcon className="w-3 h-3 mr-1" />
+            Enviar link do painel
+          </Button>
+        )}
+      </div>
+
+      <Dialog open={showLinkModal} onOpenChange={setShowLinkModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <WhatsAppIcon className="w-5 h-5 text-green-600" />
+              Enviar Link do Painel
+            </DialogTitle>
+            <DialogDescription>
+              O cliente receberá um link de acesso ao painel via WhatsApp
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="p-4 bg-green-50 rounded-xl border border-green-200">
+              <p className="text-sm text-green-800">
+                <strong>{customerName}</strong> receberá uma mensagem no número:
+              </p>
+              <p className="text-lg font-mono text-green-900 mt-1">{phone}</p>
+            </div>
+
+            <div className="p-4 bg-slate-50 rounded-xl">
+              <p className="text-xs text-slate-500 mb-2">Preview da mensagem:</p>
+              <p className="text-sm text-slate-700 whitespace-pre-line">
+                Olá {customerName}! 👋{'\n\n'}
+                Seu cadastro foi realizado com sucesso!{'\n\n'}
+                Acesse seu painel exclusivo para ver catálogo, acompanhar desenvolvimentos e pedidos.
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <Button variant="outline" className="flex-1" onClick={() => setShowLinkModal(false)}>
+                Cancelar
+              </Button>
+              <Button 
+                className="flex-1 bg-green-600 hover:bg-green-700"
+                onClick={() => sendLinkMutation.mutate()}
+                disabled={sendLinkMutation.isPending}
+              >
+                {sendLinkMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Send className="w-4 h-4 mr-2" />
+                )}
+                Enviar via WhatsApp
+              </Button>
+            </div>
+
+            {sendLinkMutation.isSuccess && (
+              <div className="flex items-center gap-2 text-green-600 text-sm">
+                <CheckCircle2 className="w-4 h-4" />
+                Link enviado com sucesso!
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+export default WhatsAppStatus;

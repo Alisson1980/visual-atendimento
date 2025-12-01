@@ -1,0 +1,100 @@
+{
+  "name": "Customer",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Nome do cliente"
+    },
+    "code": {
+      "type": "string",
+      "description": "C\u00f3digo de 3 letras do cliente (ex: ALI)"
+    },
+    "phone": {
+      "type": "string",
+      "description": "Telefone/WhatsApp do cliente"
+    },
+    "email": {
+      "type": "string",
+      "description": "Email do cliente"
+    },
+    "document": {
+      "type": "string",
+      "description": "CPF ou CNPJ"
+    },
+    "address": {
+      "type": "object",
+      "properties": {
+        "street": {
+          "type": "string"
+        },
+        "number": {
+          "type": "string"
+        },
+        "complement": {
+          "type": "string"
+        },
+        "neighborhood": {
+          "type": "string"
+        },
+        "city": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "zipcode": {
+          "type": "string"
+        }
+      },
+      "description": "Endere\u00e7o do cliente"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Tags do cliente (VIP, novo, etc)"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Observa\u00e7\u00f5es sobre o cliente"
+    },
+    "total_orders": {
+      "type": "number",
+      "default": 0,
+      "description": "Total de pedidos realizados"
+    },
+    "total_spent": {
+      "type": "number",
+      "default": 0,
+      "description": "Valor total gasto"
+    },
+    "last_contact": {
+      "type": "string",
+      "format": "date-time",
+      "description": "\u00daltimo contato"
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "whatsapp",
+        "website",
+        "instagram",
+        "facebook",
+        "indication",
+        "other"
+      ],
+      "description": "Origem do cliente"
+    },
+    "next_model_number": {
+      "type": "number",
+      "default": 1,
+      "description": "Pr\u00f3ximo n\u00famero sequencial de modelo"
+    }
+  },
+  "required": [
+    "name",
+    "phone"
+  ]
+}

@@ -1,0 +1,133 @@
+{
+  "name": "Product",
+  "type": "object",
+  "properties": {
+    "reference_code": {
+      "type": "string",
+      "description": "C\u00f3digo de refer\u00eancia (ex: 96001)"
+    },
+    "collection_id": {
+      "type": "string",
+      "description": "ID da cole\u00e7\u00e3o"
+    },
+    "description": {
+      "type": "string",
+      "description": "Descri\u00e7\u00e3o detalhada"
+    },
+    "category_id": {
+      "type": "string",
+      "description": "ID da categoria"
+    },
+    "base_price": {
+      "type": "number",
+      "description": "Pre\u00e7o base do produto"
+    },
+    "min_order_quantity": {
+      "type": "number",
+      "default": 100,
+      "description": "Quantidade m\u00ednima para primeira compra"
+    },
+    "min_reorder_quantity": {
+      "type": "number",
+      "default": 50,
+      "description": "Quantidade m\u00ednima para repeti\u00e7\u00e3o/recompra"
+    },
+    "images": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Imagens do produto"
+    },
+    "sizes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "width": {
+            "type": "number"
+          },
+          "height": {
+            "type": "number"
+          },
+          "price_adjustment": {
+            "type": "number"
+          }
+        }
+      },
+      "description": "Tamanhos (base x altura)"
+    },
+    "materials": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "material_id": {
+            "type": "string"
+          },
+          "material_code": {
+            "type": "string"
+          },
+          "material_name": {
+            "type": "string"
+          },
+          "quantity_per_unit": {
+            "type": "number"
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "Mat\u00e9rias primas utilizadas"
+    },
+    "available_processes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "process_type_id": {
+            "type": "string"
+          },
+          "process_code": {
+            "type": "string"
+          },
+          "process_name": {
+            "type": "string"
+          },
+          "custom_price_per_unit": {
+            "type": "number"
+          },
+          "custom_setup_price": {
+            "type": "number"
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "Processos dispon\u00edveis"
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true
+    },
+    "is_featured": {
+      "type": "boolean",
+      "default": false
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "reference_code",
+    "base_price"
+  ]
+}

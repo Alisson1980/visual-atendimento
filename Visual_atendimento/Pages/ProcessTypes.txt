@@ -1,0 +1,308 @@
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Plus, Edit, Trash2, Layers } from "lucide-react";
+
+export default function ProcessTypes() {
+  const queryClient = useQueryClient();
+  const [showModal, setShowModal] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [formData, setFormData] = useState({
+    code: '',
+    name: '',
+    description: '',
+    base_price_per_unit: '',
+    setup_price: '',
+    price_per_color: '',
+    price_per_thousand: '',
+    max_colors: '',
+    is_active: true,
+    order: 0
+  });
+
+  const { data: processTypes = [], isLoading } = useQuery({
+    queryKey: ['process-types'],
+    queryFn: () => base44.entities.ProcessType.list('order', 100)
+  });
+
+  const mutation = useMutation({
+    mutationFn: async (data) => {
+      const payload = {
+        ...data,
+        base_price_per_unit: parseFloat(data.base_price_per_unit) || 0,
+        setup_price: parseFloat(data.setup_price) || 0,
+        price_per_color: parseFloat(data.price_per_color) || 0,
+        price_per_thousand: parseFloat(data.price_per_thousand) || 0,
+        max_colors: parseInt(data.max_colors) || 0,
+        order: parseInt(data.order) || 0
+      };
+      if (editing) {
+        return base44.entities.ProcessType.update(editing.id, payload);
+      }
+      return base44.entities.ProcessType.create(payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['process-types']);
+      handleClose();
+    }
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id) => base44.entities.ProcessType.delete(id),
+    onSuccess: () => queryClient.invalidateQueries(['process-types'])
+  });
+
+  const handleOpen = (item = null) => {
+    if (item) {
+      setEditing(item);
+      setFormData({
+        code: item.code || '',
+        name: item.name || '',
+        description: item.description || '',
+        base_price_per_unit: item.base_price_per_unit?.toString() || '',
+        setup_price: item.setup_price?.toString() || '',
+        price_per_color: item.price_per_color?.toString() || '',
+        price_per_thousand: item.price_per_thousand?.toString() || '',
+        max_colors: item.max_colors?.toString() || '',
+        is_active: item.is_active !== false,
+        order: item.order || 0
+      });
+    } else {
+      setEditing(null);
+      setFormData({
+        code: '',
+        name: '',
+        description: '',
+        base_price_per_unit: '',
+        setup_price: '',
+        price_per_color: '',
+        price_per_thousand: '',
+        max_colors: '',
+        is_active: true,
+        order: processTypes.length
+      });
+    }
+    setShowModal(true);
+  };
+
+  const handleClose = () => {
+    setShowModal(false);
+    setEditing(null);
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    mutation.mutate(formData);
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 p-6">
+      <div className="max-w-5xl mx-auto space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Tipos de Processo</h1>
+            <p className="text-slate-500">Cadastre os processos e seus preços padrão</p>
+          </div>
+          <Button onClick={() => handleOpen()} className="bg-slate-800 hover:bg-slate-700">
+            <Plus className="w-4 h-4 mr-2" />
+            Novo Processo
+          </Button>
+        </div>
+
+        <Card className="border-0 shadow-sm">
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Código</TableHead>
+                  <TableHead>Nome</TableHead>
+                  <TableHead className="text-right">Preço/Un</TableHead>
+                  <TableHead className="text-right">Setup</TableHead>
+                  <TableHead className="text-right">Por Cor</TableHead>
+                  <TableHead className="text-right">Por Milheiro</TableHead>
+                  <TableHead className="text-center">Max Cores</TableHead>
+                  <TableHead className="text-center">Status</TableHead>
+                  <TableHead></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {isLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={9} className="text-center py-8 text-slate-400">
+                      Carregando...
+                    </TableCell>
+                  </TableRow>
+                ) : processTypes.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={9} className="text-center py-8 text-slate-400">
+                      <Layers className="w-10 h-10 mx-auto mb-2 opacity-50" />
+                      Nenhum processo cadastrado
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  processTypes.map(pt => (
+                    <TableRow key={pt.id}>
+                      <TableCell className="font-mono font-medium">{pt.code}</TableCell>
+                      <TableCell>{pt.name}</TableCell>
+                      <TableCell className="text-right">R$ {pt.base_price_per_unit?.toFixed(2) || '0,00'}</TableCell>
+                      <TableCell className="text-right">R$ {pt.setup_price?.toFixed(2) || '0,00'}</TableCell>
+                      <TableCell className="text-right">R$ {pt.price_per_color?.toFixed(2) || '0,00'}</TableCell>
+                      <TableCell className="text-right">R$ {pt.price_per_thousand?.toFixed(2) || '0,00'}</TableCell>
+                      <TableCell className="text-center">{pt.max_colors || '-'}</TableCell>
+                      <TableCell className="text-center">
+                        <Badge className={pt.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}>
+                          {pt.is_active ? 'Ativo' : 'Inativo'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex gap-1 justify-end">
+                          <Button variant="ghost" size="icon" onClick={() => handleOpen(pt)}>
+                            <Edit className="w-4 h-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="text-red-600" onClick={() => deleteMutation.mutate(pt.id)}>
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Dialog open={showModal} onOpenChange={setShowModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editing ? 'Editar Processo' : 'Novo Processo'}</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Código *</Label>
+                <Input
+                  value={formData.code}
+                  onChange={(e) => setFormData({ ...formData, code: e.target.value.toUpperCase() })}
+                  placeholder="SILK, BORD..."
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Nome *</Label>
+                <Input
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  placeholder="Silk Screen"
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Descrição</Label>
+              <Textarea
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                placeholder="Descrição do processo"
+                rows={2}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Preço por Unidade</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={formData.base_price_per_unit}
+                  onChange={(e) => setFormData({ ...formData, base_price_per_unit: e.target.value })}
+                  placeholder="0,00"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Preço Setup/Clichê</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={formData.setup_price}
+                  onChange={(e) => setFormData({ ...formData, setup_price: e.target.value })}
+                  placeholder="0,00"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label>Preço por Cor</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={formData.price_per_color}
+                  onChange={(e) => setFormData({ ...formData, price_per_color: e.target.value })}
+                  placeholder="0,00"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Preço por Milheiro</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={formData.price_per_thousand}
+                  onChange={(e) => setFormData({ ...formData, price_per_thousand: e.target.value })}
+                  placeholder="0,00"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Máximo de Cores</Label>
+                <Input
+                  type="number"
+                  value={formData.max_colors}
+                  onChange={(e) => setFormData({ ...formData, max_colors: e.target.value })}
+                  placeholder="0 = ilimitado"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={formData.is_active}
+                onCheckedChange={(v) => setFormData({ ...formData, is_active: v })}
+              />
+              <Label>Ativo</Label>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-4 border-t">
+              <Button type="button" variant="outline" onClick={handleClose}>Cancelar</Button>
+              <Button type="submit" disabled={mutation.isPending}>
+                {mutation.isPending ? 'Salvando...' : 'Salvar'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

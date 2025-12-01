@@ -1,0 +1,404 @@
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { 
+  User, 
+  Phone, 
+  Mail, 
+  Calendar,
+  Clock,
+  Tag,
+  FileText,
+  Package,
+  Bot,
+  History,
+  Star,
+  ShoppingCart,
+  Palette,
+  X,
+  Plus,
+  Save,
+  Loader2
+} from "lucide-react";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
+import { Link } from "react-router-dom";
+import { createPageUrl } from "@/utils";
+
+const classificationLabels = {
+  order: 'Pedido',
+  support: 'Suporte',
+  quote: 'Orçamento',
+  info: 'Informação',
+  complaint: 'Reclamação',
+  development: 'Desenvolvimento',
+  payment: 'Pagamento',
+  other: 'Outro'
+};
+
+const priorityLabels = {
+  low: 'Baixa',
+  normal: 'Normal',
+  high: 'Alta',
+  urgent: 'Urgente'
+};
+
+const priorityColors = {
+  low: 'bg-slate-100 text-slate-700',
+  normal: 'bg-blue-100 text-blue-700',
+  high: 'bg-orange-100 text-orange-700',
+  urgent: 'bg-red-100 text-red-700'
+};
+
+export default function ConversationDetails({ conversation, onClose }) {
+  const queryClient = useQueryClient();
+  const [notes, setNotes] = useState(conversation?.notes || '');
+  const [newTag, setNewTag] = useState('');
+  const [tags, setTags] = useState(conversation?.tags || []);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Load customer data
+  const { data: customer } = useQuery({
+    queryKey: ['customer', conversation?.customer_id],
+    queryFn: () => base44.entities.Customer.filter({ id: conversation.customer_id }),
+    enabled: !!conversation?.customer_id,
+    select: (data) => data[0]
+  });
+
+  // Load related orders
+  const { data: orders = [] } = useQuery({
+    queryKey: ['customer-orders', conversation?.customer_id],
+    queryFn: () => base44.entities.Order.filter(
+      { customer_id: conversation.customer_id },
+      '-created_date',
+      5
+    ),
+    enabled: !!conversation?.customer_id
+  });
+
+  // Load related developments
+  const { data: developments = [] } = useQuery({
+    queryKey: ['customer-developments', conversation?.customer_id],
+    queryFn: () => base44.entities.DevelopmentRequest.filter(
+      { customer_id: conversation.customer_id },
+      '-created_date',
+      5
+    ),
+    enabled: !!conversation?.customer_id
+  });
+
+  // Update mutation
+  const updateMutation = useMutation({
+    mutationFn: (data) => base44.entities.Conversation.update(conversation.id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['conversations']);
+    }
+  });
+
+  const handleSaveNotes = async () => {
+    setIsSaving(true);
+    await updateMutation.mutateAsync({ notes, tags });
+    setIsSaving(false);
+  };
+
+  const handleAddTag = () => {
+    if (newTag.trim() && !tags.includes(newTag.trim())) {
+      setTags([...tags, newTag.trim()]);
+      setNewTag('');
+    }
+  };
+
+  const handleRemoveTag = (tag) => {
+    setTags(tags.filter(t => t !== tag));
+  };
+
+  const handleUpdatePriority = (priority) => {
+    updateMutation.mutate({ priority });
+  };
+
+  const handleUpdateClassification = (classification) => {
+    updateMutation.mutate({ classification });
+  };
+
+  if (!conversation) return null;
+
+  return (
+    <div className="w-80 border-l bg-white flex flex-col h-full overflow-hidden">
+      {/* Header */}
+      <div className="p-4 border-b flex items-center justify-between">
+        <h3 className="font-semibold text-slate-900">Detalhes</h3>
+        <Button variant="ghost" size="icon" onClick={onClose}>
+          <X className="w-4 h-4" />
+        </Button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {/* Customer Info */}
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="p-3 pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <User className="w-4 h-4 text-slate-500" />
+              Cliente
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-3 pt-0 space-y-2">
+            <p className="font-medium">{conversation.customer_name}</p>
+            {conversation.customer_phone && (
+              <p className="text-sm text-slate-500 flex items-center gap-2">
+                <Phone className="w-3 h-3" />
+                {conversation.customer_phone}
+              </p>
+            )}
+            {conversation.customer_email && (
+              <p className="text-sm text-slate-500 flex items-center gap-2">
+                <Mail className="w-3 h-3" />
+                {conversation.customer_email}
+              </p>
+            )}
+            {customer && (
+              <div className="pt-2 border-t mt-2">
+                <p className="text-xs text-slate-400">
+                  Total pedidos: {customer.total_orders || 0}
+                </p>
+                <p className="text-xs text-slate-400">
+                  Total gasto: R$ {(customer.total_spent || 0).toFixed(2)}
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* AI Info */}
+        {(conversation.ai_summary || conversation.ai_suggested_action) && (
+          <Card className="border-violet-200 bg-violet-50">
+            <CardHeader className="p-3 pb-2">
+              <CardTitle className="text-sm flex items-center gap-2 text-violet-700">
+                <Bot className="w-4 h-4" />
+                Análise da IA
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-3 pt-0 space-y-2">
+              {conversation.ai_summary && (
+                <div>
+                  <p className="text-xs text-violet-600 font-medium">Resumo:</p>
+                  <p className="text-sm text-violet-800">{conversation.ai_summary}</p>
+                </div>
+              )}
+              {conversation.ai_suggested_action && (
+                <div>
+                  <p className="text-xs text-violet-600 font-medium">Sugestão:</p>
+                  <p className="text-sm text-violet-800">{conversation.ai_suggested_action}</p>
+                </div>
+              )}
+              {conversation.ai_confidence && (
+                <Badge className="bg-violet-100 text-violet-700">
+                  Confiança: {conversation.ai_confidence}%
+                </Badge>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Classification & Priority */}
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1">
+            <Label className="text-xs">Classificação</Label>
+            <Select 
+              value={conversation.classification || ''} 
+              onValueChange={handleUpdateClassification}
+            >
+              <SelectTrigger className="h-8 text-xs">
+                <SelectValue placeholder="Selecione" />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(classificationLabels).map(([key, label]) => (
+                  <SelectItem key={key} value={key}>{label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Prioridade</Label>
+            <Select 
+              value={conversation.priority || 'normal'} 
+              onValueChange={handleUpdatePriority}
+            >
+              <SelectTrigger className="h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(priorityLabels).map(([key, label]) => (
+                  <SelectItem key={key} value={key}>
+                    <Badge className={priorityColors[key]}>{label}</Badge>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        {/* Tags */}
+        <div className="space-y-2">
+          <Label className="text-xs flex items-center gap-1">
+            <Tag className="w-3 h-3" />
+            Tags
+          </Label>
+          <div className="flex flex-wrap gap-1">
+            {tags.map((tag, idx) => (
+              <Badge key={idx} variant="outline" className="text-xs">
+                {tag}
+                <button 
+                  onClick={() => handleRemoveTag(tag)}
+                  className="ml-1 hover:text-red-500"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </Badge>
+            ))}
+          </div>
+          <div className="flex gap-1">
+            <Input
+              value={newTag}
+              onChange={(e) => setNewTag(e.target.value)}
+              placeholder="Nova tag..."
+              className="h-7 text-xs"
+              onKeyPress={(e) => e.key === 'Enter' && handleAddTag()}
+            />
+            <Button size="sm" variant="outline" onClick={handleAddTag} className="h-7 px-2">
+              <Plus className="w-3 h-3" />
+            </Button>
+          </div>
+        </div>
+
+        {/* Notes */}
+        <div className="space-y-2">
+          <Label className="text-xs flex items-center gap-1">
+            <FileText className="w-3 h-3" />
+            Notas Internas
+          </Label>
+          <Textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Adicionar notas..."
+            rows={3}
+            className="text-sm"
+          />
+          <Button 
+            size="sm" 
+            onClick={handleSaveNotes}
+            disabled={isSaving}
+            className="w-full"
+          >
+            {isSaving ? (
+              <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+            ) : (
+              <Save className="w-4 h-4 mr-1" />
+            )}
+            Salvar
+          </Button>
+        </div>
+
+        {/* Transfer History */}
+        {conversation.transfer_history?.length > 0 && (
+          <div className="space-y-2">
+            <Label className="text-xs flex items-center gap-1">
+              <History className="w-3 h-3" />
+              Histórico de Transferências
+            </Label>
+            <div className="space-y-1">
+              {conversation.transfer_history.slice(-3).map((t, idx) => (
+                <div key={idx} className="text-xs p-2 bg-slate-50 rounded">
+                  <p className="text-slate-600">
+                    {t.from_user} → {t.to_user || t.to_department}
+                  </p>
+                  <p className="text-slate-400 truncate">{t.reason}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Related Orders */}
+        {orders.length > 0 && (
+          <div className="space-y-2">
+            <Label className="text-xs flex items-center gap-1">
+              <ShoppingCart className="w-3 h-3" />
+              Pedidos Recentes
+            </Label>
+            <div className="space-y-1">
+              {orders.slice(0, 3).map(order => (
+                <Link 
+                  key={order.id}
+                  to={createPageUrl(`Orders?id=${order.id}`)}
+                  className="block p-2 bg-slate-50 rounded text-xs hover:bg-slate-100"
+                >
+                  <div className="flex justify-between">
+                    <span className="font-medium">#{order.order_number}</span>
+                    <span className="text-slate-500">R$ {order.total?.toFixed(2)}</span>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Related Developments */}
+        {developments.length > 0 && (
+          <div className="space-y-2">
+            <Label className="text-xs flex items-center gap-1">
+              <Palette className="w-3 h-3" />
+              Desenvolvimentos
+            </Label>
+            <div className="space-y-1">
+              {developments.slice(0, 3).map(dev => (
+                <Link 
+                  key={dev.id}
+                  to={createPageUrl(`Developments?id=${dev.id}`)}
+                  className="block p-2 bg-slate-50 rounded text-xs hover:bg-slate-100"
+                >
+                  <div className="flex justify-between">
+                    <span className="font-medium">{dev.product_name}</span>
+                    <Badge variant="outline" className="text-xs">{dev.status}</Badge>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Timestamps */}
+        <div className="space-y-1 pt-2 border-t">
+          <p className="text-xs text-slate-400 flex items-center gap-1">
+            <Calendar className="w-3 h-3" />
+            Criado: {conversation.created_date && format(new Date(conversation.created_date), "dd/MM/yyyy HH:mm", { locale: ptBR })}
+          </p>
+          {conversation.first_response_at && (
+            <p className="text-xs text-slate-400 flex items-center gap-1">
+              <Clock className="w-3 h-3" />
+              1ª resposta: {format(new Date(conversation.first_response_at), "dd/MM/yyyy HH:mm", { locale: ptBR })}
+            </p>
+          )}
+          {conversation.resolved_at && (
+            <p className="text-xs text-emerald-600 flex items-center gap-1">
+              <Star className="w-3 h-3" />
+              Resolvido: {format(new Date(conversation.resolved_at), "dd/MM/yyyy HH:mm", { locale: ptBR })}
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

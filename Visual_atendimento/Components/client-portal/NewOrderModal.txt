@@ -1,0 +1,478 @@
+import React, { useState, useMemo } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { 
+  Search, 
+  Package, 
+  ShoppingBag, 
+  Loader2, 
+  Plus, 
+  Minus,
+  CreditCard,
+  MapPin,
+  X,
+  AlertCircle
+} from "lucide-react";
+
+export default function NewOrderModal({ 
+  open, 
+  onOpenChange, 
+  approvedDevs = [], 
+  customerId, 
+  customerData,
+  allArtworkVersions = [],
+  onSuccess
+}) {
+  const queryClient = useQueryClient();
+  const [searchRef, setSearchRef] = useState('');
+  const [selectedItems, setSelectedItems] = useState({});
+  const [paymentMethod, setPaymentMethod] = useState('pix');
+  const [addressType, setAddressType] = useState('customer');
+  const [customAddress, setCustomAddress] = useState({
+    street: '', number: '', complement: '', neighborhood: '', city: '', state: '', zipcode: ''
+  });
+
+  // Get latest artwork for a development
+  const getLatestArtwork = (devId) => {
+    const version = allArtworkVersions.find(v => v.development_id === devId);
+    return version?.file_url || null;
+  };
+
+  // Filter by reference code only
+  const filteredDevs = useMemo(() => {
+    if (!searchRef.trim()) return approvedDevs;
+    const search = searchRef.toUpperCase();
+    return approvedDevs.filter(dev => 
+      dev.reference_code?.toUpperCase().includes(search)
+    );
+  }, [approvedDevs, searchRef]);
+
+  // Create order mutation
+  const createOrder = useMutation({
+    mutationFn: async () => {
+      const orderNumber = `PED-${Date.now().toString(36).toUpperCase()}`;
+      
+      const items = await Promise.all(
+        Object.entries(selectedItems)
+          .filter(([_, qty]) => qty > 0)
+          .map(async ([devId, quantity]) => {
+            const dev = approvedDevs.find(d => d.id === devId);
+            const imageUrl = getLatestArtwork(devId) || dev.main_image;
+            
+            return {
+              product_id: dev.product_id,
+              product_name: dev.product_name,
+              development_id: dev.id,
+              reference_code: dev.reference_code || dev.request_number,
+              image_url: imageUrl,
+              quantity,
+              unit_price: dev.unit_price || 0,
+              total: (dev.unit_price || 0) * quantity
+            };
+          })
+      );
+
+      const total = items.reduce((sum, item) => sum + item.total, 0);
+      const address = addressType === 'customer' ? customerData?.address : customAddress;
+
+      // Create order
+      const order = await base44.entities.Order.create({
+        order_number: orderNumber,
+        customer_id: customerId,
+        customer_name: approvedDevs[0]?.customer_name,
+        customer_email: approvedDevs[0]?.customer_email,
+        items,
+        subtotal: total,
+        total,
+        status: 'pending',
+        payment_status: 'pending',
+        payment_method: paymentMethod,
+        shipping_address: address,
+        notes: `Pedido com ${items.length} item(s)`
+      });
+
+      // Update developments: mark has_first_order and increment times_ordered
+      for (const item of items) {
+        const dev = approvedDevs.find(d => d.id === item.development_id);
+        if (dev) {
+          await base44.entities.DevelopmentRequest.update(dev.id, { 
+            has_first_order: true,
+            times_ordered: (dev.times_ordered || 0) + 1
+          });
+        }
+      }
+
+      return order;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['client-orders']);
+      queryClient.invalidateQueries(['client-developments']);
+      setSelectedItems({});
+      setSearchRef('');
+      onOpenChange(false);
+      onSuccess?.();
+    }
+  });
+
+  const getMinQuantity = (dev) => {
+    // If has_first_order or times_ordered > 0, use reorder quantity
+    if (dev.has_first_order || (dev.times_ordered || 0) > 0) {
+      return dev.min_reorder_quantity || 50;
+    }
+    return dev.min_order_quantity || 100;
+  };
+
+  const isReorder = (dev) => {
+    return dev.has_first_order || (dev.times_ordered || 0) > 0;
+  };
+
+  const toggleItem = (devId) => {
+    const dev = approvedDevs.find(d => d.id === devId);
+    const minQty = getMinQuantity(dev);
+    
+    if (selectedItems[devId]) {
+      setSelectedItems(prev => {
+        const copy = { ...prev };
+        delete copy[devId];
+        return copy;
+      });
+    } else {
+      setSelectedItems(prev => ({ ...prev, [devId]: minQty }));
+    }
+  };
+
+  const updateQuantity = (devId, quantity, isBlur = false) => {
+    const dev = approvedDevs.find(d => d.id === devId);
+    const minQty = getMinQuantity(dev);
+    
+    if (isBlur) {
+      // On blur, enforce minimum
+      if (quantity < minQty) {
+        setSelectedItems(prev => ({ ...prev, [devId]: minQty }));
+      } else {
+        setSelectedItems(prev => ({ ...prev, [devId]: quantity }));
+      }
+    } else {
+      // During typing, allow any value >= 1
+      if (quantity === 0) {
+        setSelectedItems(prev => {
+          const copy = { ...prev };
+          delete copy[devId];
+          return copy;
+        });
+      } else {
+        setSelectedItems(prev => ({ ...prev, [devId]: quantity }));
+      }
+    }
+  };
+
+  const getOrderTotal = () => {
+    return Object.entries(selectedItems).reduce((sum, [devId, qty]) => {
+      const dev = approvedDevs.find(d => d.id === devId);
+      return sum + ((dev?.unit_price || 0) * qty);
+    }, 0);
+  };
+
+  const handleClose = () => {
+    setSelectedItems({});
+    setSearchRef('');
+    onOpenChange(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Novo Pedido</DialogTitle>
+          <DialogDescription>
+            Busque pela referência do modelo e selecione a quantidade
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-5">
+          {/* Search by Reference */}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Buscar por Referência</Label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <Input
+                placeholder="Digite a referência (ex: ALI-00001)"
+                value={searchRef}
+                onChange={(e) => setSearchRef(e.target.value)}
+                className="pl-9 font-mono uppercase"
+              />
+            </div>
+          </div>
+
+          {/* Items List */}
+          <div className="space-y-2 max-h-64 overflow-y-auto border rounded-lg p-2">
+            <Label className="text-xs text-slate-500 px-2">
+              {filteredDevs.length} modelo(s) encontrado(s)
+            </Label>
+            
+            {filteredDevs.length === 0 ? (
+              <div className="p-8 text-center text-slate-400">
+                <Package className="w-10 h-10 mx-auto mb-2 opacity-50" />
+                <p>Nenhum modelo encontrado</p>
+              </div>
+            ) : (
+              filteredDevs.map(dev => {
+                const isSelected = !!selectedItems[dev.id];
+                const quantity = selectedItems[dev.id] || 0;
+                const imageUrl = getLatestArtwork(dev.id) || dev.main_image;
+                const minQty = getMinQuantity(dev);
+                const isRepeat = isReorder(dev);
+                
+                return (
+                  <div 
+                    key={dev.id}
+                    className={`p-3 rounded-lg border transition-all ${
+                      isSelected ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div 
+                      className="flex items-center gap-3 cursor-pointer"
+                      onClick={() => toggleItem(dev.id)}
+                    >
+                      {/* Image */}
+                      <div className="w-14 h-14 rounded-lg bg-white border overflow-hidden flex-shrink-0">
+                        {imageUrl ? (
+                          <img src={imageUrl} alt="" className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center">
+                            <Package className="w-5 h-5 text-slate-300" />
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Info */}
+                      <div className="flex-1 min-w-0">
+                        <p className="font-mono text-sm font-bold text-slate-900">
+                          {dev.reference_code || dev.request_number}
+                        </p>
+                        <p className="text-xs text-slate-500 truncate">{dev.product_name}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <Badge variant="outline" className={`text-[10px] ${isRepeat ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}>
+                            {isRepeat ? 'Repetição' : '1ª Compra'}
+                          </Badge>
+                          <span className="text-[10px] text-slate-400">
+                            Mín: {minQty} un.
+                          </span>
+                        </div>
+                      </div>
+                      
+                      {/* Price */}
+                      <div className="text-right">
+                        <p className="text-sm font-bold">R$ {dev.unit_price?.toFixed(2)}</p>
+                        <p className="text-[10px] text-slate-400">/unidade</p>
+                      </div>
+                    </div>
+                    
+                    {/* Quantity Controls */}
+                    {isSelected && (
+                      <div className="flex items-center justify-between mt-3 pt-3 border-t border-emerald-200">
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const newVal = Math.max(minQty, quantity - 50);
+                              updateQuantity(dev.id, newVal, true);
+                            }}
+                            disabled={quantity <= minQty}
+                          >
+                            <Minus className="w-4 h-4" />
+                          </Button>
+                          <Input
+                            type="number"
+                            value={quantity}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value) || 0;
+                              updateQuantity(dev.id, val, false);
+                            }}
+                            onBlur={(e) => {
+                              const val = parseInt(e.target.value) || 0;
+                              updateQuantity(dev.id, val, true);
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-24 h-8 text-center font-mono"
+                            min={1}
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              updateQuantity(dev.id, quantity + 50, true);
+                            }}
+                          >
+                            <Plus className="w-4 h-4" />
+                          </Button>
+                        </div>
+                        <span className="font-bold text-emerald-700">
+                          R$ {((dev.unit_price || 0) * quantity).toFixed(2)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Payment Method */}
+          {Object.keys(selectedItems).length > 0 && (
+            <>
+              <div className="space-y-3">
+                <Label className="flex items-center gap-2 text-sm font-medium">
+                  <CreditCard className="w-4 h-4 text-violet-500" />
+                  Forma de Pagamento
+                </Label>
+                <RadioGroup value={paymentMethod} onValueChange={setPaymentMethod} className="grid grid-cols-2 gap-2">
+                  {[
+                    { value: 'pix', label: 'PIX' },
+                    { value: 'boleto', label: 'Boleto' },
+                    { value: 'credit_card', label: 'Cartão' },
+                    { value: 'transfer', label: 'Transferência' }
+                  ].map(opt => (
+                    <div 
+                      key={opt.value}
+                      className={`flex items-center gap-2 p-3 rounded-lg border cursor-pointer ${
+                        paymentMethod === opt.value ? 'border-violet-500 bg-violet-50' : 'border-slate-200'
+                      }`}
+                      onClick={() => setPaymentMethod(opt.value)}
+                    >
+                      <RadioGroupItem value={opt.value} id={`pay-${opt.value}`} />
+                      <Label htmlFor={`pay-${opt.value}`} className="cursor-pointer">{opt.label}</Label>
+                    </div>
+                  ))}
+                </RadioGroup>
+              </div>
+
+              {/* Shipping Address */}
+              <div className="space-y-3">
+                <Label className="flex items-center gap-2 text-sm font-medium">
+                  <MapPin className="w-4 h-4 text-emerald-500" />
+                  Endereço de Entrega
+                </Label>
+                <RadioGroup value={addressType} onValueChange={setAddressType} className="space-y-2">
+                  {customerData?.address && (
+                    <div 
+                      className={`p-3 rounded-lg border cursor-pointer ${
+                        addressType === 'customer' ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200'
+                      }`}
+                      onClick={() => setAddressType('customer')}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <RadioGroupItem value="customer" id="addr-customer" />
+                        <Label htmlFor="addr-customer" className="cursor-pointer font-medium">Endereço cadastrado</Label>
+                      </div>
+                      <p className="text-sm text-slate-600 ml-6">
+                        {customerData.address.street}, {customerData.address.number} - {customerData.address.city}/{customerData.address.state}
+                      </p>
+                    </div>
+                  )}
+                  <div 
+                    className={`p-3 rounded-lg border cursor-pointer ${
+                      addressType === 'custom' ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200'
+                    }`}
+                    onClick={() => setAddressType('custom')}
+                  >
+                    <div className="flex items-center gap-2">
+                      <RadioGroupItem value="custom" id="addr-custom" />
+                      <Label htmlFor="addr-custom" className="cursor-pointer font-medium">
+                        <Plus className="w-4 h-4 inline mr-1" /> Outro endereço
+                      </Label>
+                    </div>
+                  </div>
+                </RadioGroup>
+
+                {addressType === 'custom' && (
+                  <div className="grid grid-cols-3 gap-2 pl-4 border-l-2 border-emerald-200">
+                    <div className="col-span-2">
+                      <Input
+                        value={customAddress.street}
+                        onChange={(e) => setCustomAddress({ ...customAddress, street: e.target.value })}
+                        placeholder="Rua"
+                      />
+                    </div>
+                    <Input
+                      value={customAddress.number}
+                      onChange={(e) => setCustomAddress({ ...customAddress, number: e.target.value })}
+                      placeholder="Nº"
+                    />
+                    <Input
+                      value={customAddress.neighborhood}
+                      onChange={(e) => setCustomAddress({ ...customAddress, neighborhood: e.target.value })}
+                      placeholder="Bairro"
+                    />
+                    <Input
+                      value={customAddress.city}
+                      onChange={(e) => setCustomAddress({ ...customAddress, city: e.target.value })}
+                      placeholder="Cidade"
+                    />
+                    <Input
+                      value={customAddress.state}
+                      onChange={(e) => setCustomAddress({ ...customAddress, state: e.target.value })}
+                      placeholder="UF"
+                      maxLength={2}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Total */}
+              <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="font-medium text-emerald-900">Total do Pedido</span>
+                    <p className="text-xs text-emerald-700">{Object.keys(selectedItems).length} item(s)</p>
+                  </div>
+                  <span className="text-2xl font-bold text-emerald-700">
+                    R$ {getOrderTotal().toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Actions */}
+          <div className="flex gap-3 pt-2">
+            <Button variant="outline" className="flex-1" onClick={handleClose}>
+              Cancelar
+            </Button>
+            <Button 
+              className="flex-1 bg-emerald-600 hover:bg-emerald-700"
+              onClick={() => createOrder.mutate()}
+              disabled={createOrder.isPending || Object.keys(selectedItems).length === 0 || (addressType === 'custom' && (!customAddress.street || !customAddress.city))}
+            >
+              {createOrder.isPending ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <ShoppingBag className="w-4 h-4 mr-2" />
+              )}
+              Confirmar Pedido
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}

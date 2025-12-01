@@ -1,0 +1,309 @@
+{
+  "name": "DevelopmentRequest",
+  "type": "object",
+  "properties": {
+    "reference_code": {
+      "type": "string",
+      "description": "C\u00f3digo de refer\u00eancia \u00fanico (ex: ALI-00001)"
+    },
+    "request_number": {
+      "type": "string",
+      "description": "N\u00famero da solicita\u00e7\u00e3o (legacy)"
+    },
+    "customer_id": {
+      "type": "string",
+      "description": "ID do cliente"
+    },
+    "customer_code": {
+      "type": "string",
+      "description": "C\u00f3digo de 3 letras do cliente"
+    },
+    "customer_name": {
+      "type": "string",
+      "description": "Nome do cliente"
+    },
+    "customer_email": {
+      "type": "string",
+      "description": "Email do cliente"
+    },
+    "product_id": {
+      "type": "string",
+      "description": "ID do produto base"
+    },
+    "product_name": {
+      "type": "string",
+      "description": "Nome do produto"
+    },
+    "main_image": {
+      "type": "string",
+      "description": "Imagem principal do item"
+    },
+    "product_base_price": {
+      "type": "number",
+      "description": "Pre\u00e7o base do produto"
+    },
+    "min_order_quantity": {
+      "type": "number",
+      "default": 100,
+      "description": "Quantidade m\u00ednima para primeira compra"
+    },
+    "min_reorder_quantity": {
+      "type": "number",
+      "default": 50,
+      "description": "Quantidade m\u00ednima para recompra/repeti\u00e7\u00e3o"
+    },
+    "has_first_order": {
+      "type": "boolean",
+      "default": false,
+      "description": "Se j\u00e1 teve a primeira compra realizada"
+    },
+    "times_ordered": {
+      "type": "number",
+      "default": 0,
+      "description": "Quantas vezes este modelo foi pedido"
+    },
+    "selected_processes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "process_type_id": {
+            "type": "string"
+          },
+          "process_code": {
+            "type": "string"
+          },
+          "process_name": {
+            "type": "string"
+          },
+          "price_per_unit": {
+            "type": "number"
+          },
+          "setup_price": {
+            "type": "number"
+          }
+        }
+      },
+      "description": "Processos selecionados"
+    },
+    "selected_materials": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "material_id": {
+            "type": "string"
+          },
+          "material_code": {
+            "type": "string"
+          },
+          "material_name": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "selected_color": {
+            "type": "string"
+          },
+          "quantity_per_unit": {
+            "type": "number"
+          }
+        }
+      },
+      "description": "Materiais selecionados com cores"
+    },
+    "customizations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "selected_value": {
+            "type": "string"
+          },
+          "selected_label": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "Personaliza\u00e7\u00f5es selecionadas"
+    },
+    "quantity": {
+      "type": "number",
+      "description": "Quantidade solicitada"
+    },
+    "description": {
+      "type": "string",
+      "description": "Descri\u00e7\u00e3o/observa\u00e7\u00f5es do cliente"
+    },
+    "reference_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Arquivos de refer\u00eancia do cliente"
+    },
+    "internal_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Arquivos internos"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "in_development",
+        "awaiting_approval",
+        "revision_requested",
+        "approved",
+        "order_created",
+        "production",
+        "completed",
+        "cancelled"
+      ],
+      "default": "pending",
+      "description": "Status do desenvolvimento"
+    },
+    "artwork_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Arquivos de arte desenvolvidos"
+    },
+    "current_artwork_version": {
+      "type": "number",
+      "default": 0,
+      "description": "Vers\u00e3o atual da arte"
+    },
+    "unit_price": {
+      "type": "number",
+      "description": "Pre\u00e7o unit\u00e1rio definido"
+    },
+    "total_price": {
+      "type": "number",
+      "description": "Pre\u00e7o total"
+    },
+    "price_breakdown": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "value": {
+            "type": "number"
+          }
+        }
+      },
+      "description": "Detalhamento do pre\u00e7o"
+    },
+    "estimated_delivery_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Data prevista de entrega"
+    },
+    "assigned_to": {
+      "type": "string",
+      "description": "Respons\u00e1vel atual"
+    },
+    "assigned_to_name": {
+      "type": "string",
+      "description": "Nome do respons\u00e1vel"
+    },
+    "assigned_role": {
+      "type": "string",
+      "enum": [
+        "vendedor",
+        "designer",
+        "gerente"
+      ],
+      "description": "Fun\u00e7\u00e3o do respons\u00e1vel"
+    },
+    "transfer_history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "from_user": {
+            "type": "string"
+          },
+          "to_user": {
+            "type": "string"
+          },
+          "from_role": {
+            "type": "string"
+          },
+          "to_role": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "transferred_at": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "Hist\u00f3rico de transfer\u00eancias"
+    },
+    "revision_notes": {
+      "type": "string",
+      "description": "Notas de revis\u00e3o do cliente"
+    },
+    "internal_notes": {
+      "type": "string",
+      "description": "Notas internas da equipe"
+    },
+    "approved_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Data de aprova\u00e7\u00e3o"
+    },
+    "approved_ip": {
+      "type": "string",
+      "description": "IP no momento da aprova\u00e7\u00e3o"
+    },
+    "approval_signature": {
+      "type": "string",
+      "description": "URL da assinatura digital"
+    },
+    "deadline": {
+      "type": "string",
+      "format": "date",
+      "description": "Prazo de entrega"
+    },
+    "priority": {
+      "type": "string",
+      "enum": [
+        "low",
+        "normal",
+        "high",
+        "urgent"
+      ],
+      "default": "normal",
+      "description": "Prioridade"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Tags para organiza\u00e7\u00e3o"
+    }
+  },
+  "required": [
+    "customer_id",
+    "product_id",
+    "quantity"
+  ]
+}

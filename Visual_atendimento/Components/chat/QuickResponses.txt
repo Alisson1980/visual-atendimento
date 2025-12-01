@@ -1,0 +1,116 @@
+import React, { useState } from 'react';
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Input } from "@/components/ui/input";
+import { Zap, Search } from "lucide-react";
+
+const defaultResponses = [
+  {
+    category: 'Saudação',
+    responses: [
+      { title: 'Boas vindas', text: 'Olá! Bem-vindo(a) à Visual Etiquetas! Como posso ajudar você hoje?' },
+      { title: 'Retorno', text: 'Olá! Obrigado por entrar em contato novamente. Como posso ajudar?' },
+    ]
+  },
+  {
+    category: 'Orçamento',
+    responses: [
+      { title: 'Pedir detalhes', text: 'Para fazer um orçamento personalizado, preciso de algumas informações:\n\n1. Qual produto você tem interesse?\n2. Qual a quantidade desejada?\n3. Você já tem a arte pronta?' },
+      { title: 'Enviar orçamento', text: 'Segue o orçamento solicitado! Se tiver dúvidas, estou à disposição.' },
+      { title: 'Quantidade mínima', text: 'Nossa quantidade mínima para pedidos personalizados é de 100 unidades. Podemos ajustar conforme sua necessidade!' },
+    ]
+  },
+  {
+    category: 'Pedido',
+    responses: [
+      { title: 'Confirmar pedido', text: 'Pedido confirmado! Vou encaminhar para produção. Você receberá atualizações sobre o status.' },
+      { title: 'Status pedido', text: 'Vou verificar o status do seu pedido e retorno em instantes!' },
+      { title: 'Prazo entrega', text: 'O prazo de entrega é de X dias úteis após a aprovação da arte e confirmação do pagamento.' },
+    ]
+  },
+  {
+    category: 'Pagamento',
+    responses: [
+      { title: 'Formas pagamento', text: 'Aceitamos: PIX, Boleto, Cartão de Crédito e Transferência Bancária. Qual prefere?' },
+      { title: 'Dados PIX', text: 'Chave PIX: [CHAVE]\nNome: Visual Etiquetas\nApós o pagamento, envie o comprovante por aqui!' },
+    ]
+  },
+  {
+    category: 'Encerramento',
+    responses: [
+      { title: 'Despedida', text: 'Foi um prazer atendê-lo(a)! Se precisar de mais alguma coisa, é só chamar. Até breve! 😊' },
+      { title: 'Avaliação', text: 'Agradeço seu contato! Se puder, avalie nosso atendimento de 1 a 5 estrelas. Sua opinião é muito importante!' },
+    ]
+  },
+];
+
+export default function QuickResponses({ onSelect }) {
+  const [search, setSearch] = useState('');
+  const [open, setOpen] = useState(false);
+
+  const filteredResponses = defaultResponses.map(cat => ({
+    ...cat,
+    responses: cat.responses.filter(r => 
+      r.title.toLowerCase().includes(search.toLowerCase()) ||
+      r.text.toLowerCase().includes(search.toLowerCase())
+    )
+  })).filter(cat => cat.responses.length > 0);
+
+  const handleSelect = (text) => {
+    onSelect(text);
+    setOpen(false);
+    setSearch('');
+  };
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon" className="text-amber-600 hover:text-amber-700 hover:bg-amber-50">
+          <Zap className="w-5 h-5" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-80 p-0" align="start" side="top">
+        <div className="p-2 border-b">
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar resposta rápida..."
+              className="pl-8 h-8"
+            />
+          </div>
+        </div>
+        <div className="max-h-64 overflow-y-auto p-2 space-y-3">
+          {filteredResponses.map((category, idx) => (
+            <div key={idx}>
+              <Badge variant="outline" className="mb-2 text-xs">{category.category}</Badge>
+              <div className="space-y-1">
+                {category.responses.map((response, rIdx) => (
+                  <button
+                    key={rIdx}
+                    onClick={() => handleSelect(response.text)}
+                    className="w-full text-left p-2 rounded hover:bg-slate-100 transition-colors"
+                  >
+                    <p className="text-sm font-medium text-slate-900">{response.title}</p>
+                    <p className="text-xs text-slate-500 truncate">{response.text}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+          {filteredResponses.length === 0 && (
+            <p className="text-center text-sm text-slate-500 py-4">
+              Nenhuma resposta encontrada
+            </p>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}

@@ -1,0 +1,784 @@
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { 
+  Search, 
+  MoreVertical, 
+  Eye, 
+  Package,
+  Truck,
+  CheckCircle,
+  XCircle,
+  Clock,
+  ShoppingCart,
+  DollarSign,
+  Calendar,
+  Factory,
+  Box,
+  Loader2
+} from "lucide-react";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
+
+const statusConfig = {
+  pending: { label: 'Pendente', color: 'bg-amber-100 text-amber-700', icon: Clock },
+  confirmed: { label: 'Confirmado', color: 'bg-blue-100 text-blue-700', icon: CheckCircle },
+  in_production: { label: 'Em Produção', color: 'bg-violet-100 text-violet-700', icon: Factory },
+  ready: { label: 'Pronto', color: 'bg-cyan-100 text-cyan-700', icon: Box },
+  shipped: { label: 'Enviado', color: 'bg-indigo-100 text-indigo-700', icon: Truck },
+  delivered: { label: 'Entregue', color: 'bg-emerald-100 text-emerald-700', icon: CheckCircle },
+  cancelled: { label: 'Cancelado', color: 'bg-red-100 text-red-700', icon: XCircle }
+};
+
+const paymentStatusConfig = {
+  pending: { label: 'Aguardando', color: 'bg-amber-100 text-amber-700' },
+  partial: { label: 'Parcial', color: 'bg-blue-100 text-blue-700' },
+  paid: { label: 'Pago', color: 'bg-emerald-100 text-emerald-700' },
+  refunded: { label: 'Reembolsado', color: 'bg-red-100 text-red-700' }
+};
+
+export default function Orders() {
+  const queryClient = useQueryClient();
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [showOrderModal, setShowOrderModal] = useState(false);
+  const [showProductionModal, setShowProductionModal] = useState(false);
+  const [showShippingModal, setShowShippingModal] = useState(false);
+  const [productionData, setProductionData] = useState({ start_date: '', end_date: '' });
+  const [shippingData, setShippingData] = useState({ 
+    estimated_date: '', 
+    shipped_date: '', 
+    tracking_code: '', 
+    carrier: '' 
+  });
+
+  // Load current user
+  const { data: currentUser } = useQuery({
+    queryKey: ['currentUser'],
+    queryFn: () => base44.auth.me()
+  });
+
+  // Carregar pedidos
+  const { data: allOrders = [], isLoading } = useQuery({
+    queryKey: ['orders'],
+    queryFn: () => base44.entities.Order.list('-created_date', 200),
+  });
+
+  // Filtrar pedidos por usuário (admin vê todos)
+  const isAdmin = currentUser?.role === 'admin';
+  const orders = isAdmin 
+    ? allOrders 
+    : allOrders.filter(o => 
+        o.assigned_to === currentUser?.email || 
+        o.created_by === currentUser?.email
+      );
+
+  // Mutation para atualizar pedido
+  const updateOrderMutation = useMutation({
+    mutationFn: ({ id, data }) => base44.entities.Order.update(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['orders']);
+    }
+  });
+
+  // Filtrar pedidos
+  const filteredOrders = orders.filter(order => {
+    const matchesSearch = !searchTerm || 
+      order.order_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      order.customer_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      order.customer_phone?.includes(searchTerm);
+    
+    const matchesStatus = statusFilter === 'all' || order.status === statusFilter;
+    
+    return matchesSearch && matchesStatus;
+  });
+
+  // Métricas
+  const totalOrders = orders.length;
+  const pendingOrders = orders.filter(o => o.status === 'pending').length;
+  const inProductionOrders = orders.filter(o => o.status === 'in_production').length;
+  const totalRevenue = orders
+    .filter(o => o.payment_status === 'paid')
+    .reduce((sum, o) => sum + (o.total || 0), 0);
+
+  const handleViewOrder = (order) => {
+    setSelectedOrder(order);
+    setShowOrderModal(true);
+  };
+
+  const handleUpdateStatus = (orderId, status) => {
+    updateOrderMutation.mutate({ id: orderId, data: { status } });
+  };
+
+  const handleUpdatePaymentStatus = (orderId, payment_status) => {
+    updateOrderMutation.mutate({ id: orderId, data: { payment_status } });
+  };
+
+  const handleStartProduction = (order) => {
+    setSelectedOrder(order);
+    setProductionData({ start_date: format(new Date(), 'yyyy-MM-dd'), end_date: '' });
+    setShowProductionModal(true);
+  };
+
+  const handleConfirmProduction = async () => {
+    await updateOrderMutation.mutateAsync({
+      id: selectedOrder.id,
+      data: {
+        status: 'in_production',
+        production_start_date: productionData.start_date,
+        production_end_date: productionData.end_date,
+        assigned_to: currentUser?.email,
+        assigned_to_name: currentUser?.full_name
+      }
+    });
+    setShowProductionModal(false);
+    setShowOrderModal(false);
+  };
+
+  const handlePrepareShipping = (order) => {
+    setSelectedOrder(order);
+    setShippingData({
+      estimated_date: order.estimated_shipping_date || '',
+      shipped_date: format(new Date(), 'yyyy-MM-dd'),
+      tracking_code: order.tracking_code || '',
+      carrier: order.shipping_carrier || ''
+    });
+    setShowShippingModal(true);
+  };
+
+  const handleConfirmShipping = async () => {
+    await updateOrderMutation.mutateAsync({
+      id: selectedOrder.id,
+      data: {
+        status: 'shipped',
+        estimated_shipping_date: shippingData.estimated_date,
+        shipped_date: shippingData.shipped_date,
+        tracking_code: shippingData.tracking_code,
+        shipping_carrier: shippingData.carrier
+      }
+    });
+    setShowShippingModal(false);
+    setShowOrderModal(false);
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 p-6">
+      <div className="max-w-7xl mx-auto space-y-6">
+        {/* Header */}
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Pedidos</h1>
+            <p className="text-slate-500">{totalOrders} pedidos registrados</p>
+          </div>
+        </div>
+
+        {/* Stats */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <Card className="border-0 shadow-sm cursor-pointer" onClick={() => setStatusFilter('all')}>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-100 rounded-lg">
+                  <ShoppingCart className="w-5 h-5 text-blue-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">{totalOrders}</p>
+                  <p className="text-sm text-slate-500">Total</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-0 shadow-sm cursor-pointer" onClick={() => setStatusFilter('pending')}>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-amber-100 rounded-lg">
+                  <Clock className="w-5 h-5 text-amber-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">{pendingOrders}</p>
+                  <p className="text-sm text-slate-500">Pendentes</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-0 shadow-sm cursor-pointer" onClick={() => setStatusFilter('in_production')}>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-violet-100 rounded-lg">
+                  <Factory className="w-5 h-5 text-violet-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">{inProductionOrders}</p>
+                  <p className="text-sm text-slate-500">Em Produção</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-0 shadow-sm">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-emerald-100 rounded-lg">
+                  <DollarSign className="w-5 h-5 text-emerald-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">
+                    R$ {totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}
+                  </p>
+                  <p className="text-sm text-slate-500">Receita</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Filtros */}
+        <Card className="border-0 shadow-sm">
+          <CardContent className="p-4">
+            <div className="flex flex-col md:flex-row gap-4">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Input
+                  placeholder="Buscar pedido..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+              
+              <Tabs value={statusFilter} onValueChange={setStatusFilter}>
+                <TabsList className="bg-slate-100">
+                  <TabsTrigger value="all">Todos</TabsTrigger>
+                  <TabsTrigger value="pending">Pendentes</TabsTrigger>
+                  <TabsTrigger value="confirmed">Confirmados</TabsTrigger>
+                  <TabsTrigger value="in_production">Produção</TabsTrigger>
+                  <TabsTrigger value="shipped">Enviados</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Lista de pedidos */}
+        <Card className="border-0 shadow-sm">
+          {isLoading ? (
+            <CardContent className="p-6">
+              <div className="animate-pulse space-y-4">
+                {[1, 2, 3, 4, 5].map(i => (
+                  <div key={i} className="flex items-center gap-4 p-4 bg-slate-50 rounded-lg">
+                    <div className="w-12 h-12 bg-slate-200 rounded-lg" />
+                    <div className="flex-1 space-y-2">
+                      <div className="h-4 bg-slate-200 rounded w-1/4" />
+                      <div className="h-3 bg-slate-200 rounded w-1/2" />
+                    </div>
+                    <div className="h-6 bg-slate-200 rounded w-20" />
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          ) : filteredOrders.length === 0 ? (
+            <CardContent className="p-12 text-center">
+              <ShoppingCart className="w-12 h-12 mx-auto text-slate-300 mb-4" />
+              <p className="text-slate-500">Nenhum pedido encontrado</p>
+            </CardContent>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-slate-100">
+                    <th className="text-left py-4 px-6 text-sm font-medium text-slate-500">Pedido</th>
+                    <th className="text-left py-4 px-6 text-sm font-medium text-slate-500">Cliente</th>
+                    <th className="text-left py-4 px-6 text-sm font-medium text-slate-500">Itens</th>
+                    <th className="text-left py-4 px-6 text-sm font-medium text-slate-500">Status</th>
+                    <th className="text-left py-4 px-6 text-sm font-medium text-slate-500">Pagamento</th>
+                    <th className="text-right py-4 px-6 text-sm font-medium text-slate-500">Total</th>
+                    <th className="py-4 px-6"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredOrders.map(order => (
+                    <tr 
+                      key={order.id} 
+                      className="border-b border-slate-50 hover:bg-slate-50 transition-colors cursor-pointer"
+                      onClick={() => handleViewOrder(order)}
+                    >
+                      <td className="py-4 px-6">
+                        <div>
+                          <span className="font-semibold text-slate-900">
+                            #{order.order_number || order.id?.slice(-6)}
+                          </span>
+                          <p className="text-xs text-slate-500">
+                            {order.created_date && format(new Date(order.created_date), "dd/MM/yyyy")}
+                          </p>
+                        </div>
+                      </td>
+                      <td className="py-4 px-6">
+                        <div>
+                          <p className="font-medium text-slate-900">{order.customer_name}</p>
+                          <p className="text-sm text-slate-500">{order.customer_phone || order.customer_email}</p>
+                        </div>
+                      </td>
+                      <td className="py-4 px-6">
+                        <span className="text-sm text-slate-600">
+                          {order.items?.length || 0} {order.items?.length === 1 ? 'item' : 'itens'}
+                        </span>
+                      </td>
+                      <td className="py-4 px-6">
+                        <Badge className={statusConfig[order.status]?.color}>
+                          {statusConfig[order.status]?.label || order.status}
+                        </Badge>
+                      </td>
+                      <td className="py-4 px-6">
+                        <Badge className={paymentStatusConfig[order.payment_status]?.color}>
+                          {paymentStatusConfig[order.payment_status]?.label || order.payment_status}
+                        </Badge>
+                      </td>
+                      <td className="py-4 px-6 text-right">
+                        <span className="font-semibold text-slate-900">
+                          R$ {order.total?.toFixed(2)}
+                        </span>
+                      </td>
+                      <td className="py-4 px-6">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                            <Button variant="ghost" size="icon">
+                              <MoreVertical className="w-4 h-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleViewOrder(order); }}>
+                              <Eye className="w-4 h-4 mr-2" />
+                              Ver detalhes
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            {order.status === 'pending' && (
+                              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleUpdateStatus(order.id, 'confirmed'); }}>
+                                <CheckCircle className="w-4 h-4 mr-2" />
+                                Confirmar Pedido
+                              </DropdownMenuItem>
+                            )}
+                            {order.status === 'confirmed' && (
+                              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleStartProduction(order); }}>
+                                <Factory className="w-4 h-4 mr-2" />
+                                Iniciar Produção
+                              </DropdownMenuItem>
+                            )}
+                            {order.status === 'in_production' && (
+                              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleUpdateStatus(order.id, 'ready'); }}>
+                                <Box className="w-4 h-4 mr-2" />
+                                Marcar Pronto
+                              </DropdownMenuItem>
+                            )}
+                            {order.status === 'ready' && (
+                              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handlePrepareShipping(order); }}>
+                                <Truck className="w-4 h-4 mr-2" />
+                                Registrar Envio
+                              </DropdownMenuItem>
+                            )}
+                            {order.status === 'shipped' && (
+                              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleUpdateStatus(order.id, 'delivered'); }}>
+                                <CheckCircle className="w-4 h-4 mr-2 text-emerald-500" />
+                                Marcar Entregue
+                              </DropdownMenuItem>
+                            )}
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem 
+                              onClick={(e) => { e.stopPropagation(); handleUpdatePaymentStatus(order.id, 'paid'); }}
+                              className="text-emerald-600"
+                            >
+                              <DollarSign className="w-4 h-4 mr-2" />
+                              Marcar como pago
+                            </DropdownMenuItem>
+                            <DropdownMenuItem 
+                              onClick={(e) => { e.stopPropagation(); handleUpdateStatus(order.id, 'cancelled'); }}
+                              className="text-red-600"
+                            >
+                              <XCircle className="w-4 h-4 mr-2" />
+                              Cancelar
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+
+        {/* Modal de detalhes do pedido */}
+        <Dialog open={showOrderModal} onOpenChange={setShowOrderModal}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                Pedido #{selectedOrder?.order_number || selectedOrder?.id?.slice(-6)}
+                <Badge className={statusConfig[selectedOrder?.status]?.color}>
+                  {statusConfig[selectedOrder?.status]?.label}
+                </Badge>
+              </DialogTitle>
+            </DialogHeader>
+
+            {selectedOrder && (
+              <div className="space-y-6">
+                {/* Informações do cliente */}
+                <div className="p-4 bg-slate-50 rounded-xl">
+                  <h3 className="font-semibold text-slate-900 mb-3">Cliente</h3>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <p className="text-slate-500">Nome</p>
+                      <p className="font-medium">{selectedOrder.customer_name}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Contato</p>
+                      <p className="font-medium">{selectedOrder.customer_phone || selectedOrder.customer_email}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Datas de produção e envio */}
+                {(selectedOrder.production_start_date || selectedOrder.estimated_shipping_date) && (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {selectedOrder.production_start_date && (
+                      <div className="p-3 bg-violet-50 rounded-lg">
+                        <p className="text-xs text-violet-600">Início Produção</p>
+                        <p className="font-semibold text-violet-900">
+                          {format(new Date(selectedOrder.production_start_date), "dd/MM/yyyy")}
+                        </p>
+                      </div>
+                    )}
+                    {selectedOrder.production_end_date && (
+                      <div className="p-3 bg-violet-50 rounded-lg">
+                        <p className="text-xs text-violet-600">Prev. Término</p>
+                        <p className="font-semibold text-violet-900">
+                          {format(new Date(selectedOrder.production_end_date), "dd/MM/yyyy")}
+                        </p>
+                      </div>
+                    )}
+                    {selectedOrder.estimated_shipping_date && (
+                      <div className="p-3 bg-blue-50 rounded-lg">
+                        <p className="text-xs text-blue-600">Prev. Envio</p>
+                        <p className="font-semibold text-blue-900">
+                          {format(new Date(selectedOrder.estimated_shipping_date), "dd/MM/yyyy")}
+                        </p>
+                      </div>
+                    )}
+                    {selectedOrder.shipped_date && (
+                      <div className="p-3 bg-emerald-50 rounded-lg">
+                        <p className="text-xs text-emerald-600">Enviado em</p>
+                        <p className="font-semibold text-emerald-900">
+                          {format(new Date(selectedOrder.shipped_date), "dd/MM/yyyy")}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Rastreio */}
+                {selectedOrder.tracking_code && (
+                  <div className="p-4 bg-indigo-50 rounded-xl">
+                    <h3 className="font-semibold text-indigo-900 mb-2">Informações de Envio</h3>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <p className="text-indigo-600">Transportadora</p>
+                        <p className="font-medium">{selectedOrder.shipping_carrier || '-'}</p>
+                      </div>
+                      <div>
+                        <p className="text-indigo-600">Código de Rastreio</p>
+                        <p className="font-medium font-mono">{selectedOrder.tracking_code}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Itens do pedido */}
+                <div>
+                  <h3 className="font-semibold text-slate-900 mb-3">Itens</h3>
+                  <div className="space-y-2">
+                    {selectedOrder.items?.map((item, index) => (
+                      <div key={index} className="flex justify-between items-center p-3 bg-slate-50 rounded-lg">
+                        <div>
+                          <p className="font-medium">{item.product_name}</p>
+                          <p className="text-sm text-slate-500">
+                            {item.quantity}x R$ {item.unit_price?.toFixed(2)}
+                          </p>
+                        </div>
+                        <p className="font-semibold">R$ {item.total?.toFixed(2)}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Totais */}
+                <div className="border-t pt-4 space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-500">Subtotal</span>
+                    <span>R$ {selectedOrder.subtotal?.toFixed(2)}</span>
+                  </div>
+                  {selectedOrder.discount > 0 && (
+                    <div className="flex justify-between text-sm text-emerald-600">
+                      <span>Desconto</span>
+                      <span>- R$ {selectedOrder.discount?.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {selectedOrder.shipping_cost > 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-slate-500">Frete</span>
+                      <span>R$ {selectedOrder.shipping_cost?.toFixed(2)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-lg font-bold pt-2 border-t">
+                    <span>Total</span>
+                    <span>R$ {selectedOrder.total?.toFixed(2)}</span>
+                  </div>
+                </div>
+
+                {/* Status do pagamento */}
+                <div className="flex items-center justify-between p-4 bg-slate-50 rounded-xl">
+                  <div>
+                    <p className="text-sm text-slate-500">Status do Pagamento</p>
+                    <Badge className={paymentStatusConfig[selectedOrder.payment_status]?.color}>
+                      {paymentStatusConfig[selectedOrder.payment_status]?.label}
+                    </Badge>
+                  </div>
+                  <div>
+                    <p className="text-sm text-slate-500">Método</p>
+                    <p className="font-medium capitalize">
+                      {selectedOrder.payment_method?.replace('_', ' ') || 'Não informado'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Ações */}
+                <div className="flex flex-wrap gap-3 pt-4 border-t">
+                  {selectedOrder.status === 'pending' && (
+                    <Button 
+                      onClick={() => {
+                        handleUpdateStatus(selectedOrder.id, 'confirmed');
+                        setSelectedOrder({ ...selectedOrder, status: 'confirmed' });
+                      }}
+                      className="bg-blue-600 hover:bg-blue-700"
+                    >
+                      <CheckCircle className="w-4 h-4 mr-2" />
+                      Confirmar Pedido
+                    </Button>
+                  )}
+                  {selectedOrder.status === 'confirmed' && (
+                    <Button 
+                      onClick={() => handleStartProduction(selectedOrder)}
+                      className="bg-violet-600 hover:bg-violet-700"
+                    >
+                      <Factory className="w-4 h-4 mr-2" />
+                      Iniciar Produção
+                    </Button>
+                  )}
+                  {selectedOrder.status === 'in_production' && (
+                    <Button 
+                      onClick={() => {
+                        handleUpdateStatus(selectedOrder.id, 'ready');
+                        setSelectedOrder({ ...selectedOrder, status: 'ready' });
+                      }}
+                      className="bg-cyan-600 hover:bg-cyan-700"
+                    >
+                      <Box className="w-4 h-4 mr-2" />
+                      Marcar Pronto
+                    </Button>
+                  )}
+                  {selectedOrder.status === 'ready' && (
+                    <Button 
+                      onClick={() => handlePrepareShipping(selectedOrder)}
+                      className="bg-indigo-600 hover:bg-indigo-700"
+                    >
+                      <Truck className="w-4 h-4 mr-2" />
+                      Registrar Envio
+                    </Button>
+                  )}
+                  {selectedOrder.status === 'shipped' && (
+                    <Button 
+                      onClick={() => {
+                        handleUpdateStatus(selectedOrder.id, 'delivered');
+                        setSelectedOrder({ ...selectedOrder, status: 'delivered' });
+                      }}
+                      className="bg-emerald-600 hover:bg-emerald-700"
+                    >
+                      <CheckCircle className="w-4 h-4 mr-2" />
+                      Marcar Entregue
+                    </Button>
+                  )}
+
+                  <Select 
+                    value={selectedOrder.payment_status}
+                    onValueChange={(v) => {
+                      handleUpdatePaymentStatus(selectedOrder.id, v);
+                      setSelectedOrder({ ...selectedOrder, payment_status: v });
+                    }}
+                  >
+                    <SelectTrigger className="w-40">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pending">Aguardando</SelectItem>
+                      <SelectItem value="partial">Parcial</SelectItem>
+                      <SelectItem value="paid">Pago</SelectItem>
+                      <SelectItem value="refunded">Reembolsado</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal de Produção */}
+        <Dialog open={showProductionModal} onOpenChange={setShowProductionModal}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Iniciar Produção</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="p-4 bg-slate-50 rounded-xl">
+                <p className="font-medium">Pedido #{selectedOrder?.order_number}</p>
+                <p className="text-sm text-slate-500">{selectedOrder?.customer_name}</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Data de Início</Label>
+                  <Input
+                    type="date"
+                    value={productionData.start_date}
+                    onChange={(e) => setProductionData({ ...productionData, start_date: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Previsão de Término *</Label>
+                  <Input
+                    type="date"
+                    value={productionData.end_date}
+                    onChange={(e) => setProductionData({ ...productionData, end_date: e.target.value })}
+                    min={productionData.start_date}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <Button variant="outline" className="flex-1" onClick={() => setShowProductionModal(false)}>
+                  Cancelar
+                </Button>
+                <Button 
+                  className="flex-1 bg-violet-600 hover:bg-violet-700"
+                  onClick={handleConfirmProduction}
+                  disabled={!productionData.end_date || updateOrderMutation.isPending}
+                >
+                  {updateOrderMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <Factory className="w-4 h-4 mr-2" />
+                  )}
+                  Iniciar Produção
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal de Envio */}
+        <Dialog open={showShippingModal} onOpenChange={setShowShippingModal}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Registrar Envio</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="p-4 bg-slate-50 rounded-xl">
+                <p className="font-medium">Pedido #{selectedOrder?.order_number}</p>
+                <p className="text-sm text-slate-500">{selectedOrder?.customer_name}</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Data de Envio</Label>
+                  <Input
+                    type="date"
+                    value={shippingData.shipped_date}
+                    onChange={(e) => setShippingData({ ...shippingData, shipped_date: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Previsão de Entrega</Label>
+                  <Input
+                    type="date"
+                    value={shippingData.estimated_date}
+                    onChange={(e) => setShippingData({ ...shippingData, estimated_date: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Transportadora</Label>
+                <Input
+                  value={shippingData.carrier}
+                  onChange={(e) => setShippingData({ ...shippingData, carrier: e.target.value })}
+                  placeholder="Ex: Correios, Jadlog..."
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Código de Rastreio</Label>
+                <Input
+                  value={shippingData.tracking_code}
+                  onChange={(e) => setShippingData({ ...shippingData, tracking_code: e.target.value })}
+                  placeholder="Código de rastreamento"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <Button variant="outline" className="flex-1" onClick={() => setShowShippingModal(false)}>
+                  Cancelar
+                </Button>
+                <Button 
+                  className="flex-1 bg-indigo-600 hover:bg-indigo-700"
+                  onClick={handleConfirmShipping}
+                  disabled={updateOrderMutation.isPending}
+                >
+                  {updateOrderMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <Truck className="w-4 h-4 mr-2" />
+                  )}
+                  Confirmar Envio
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </div>
+  );
+}

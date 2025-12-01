@@ -1,0 +1,614 @@
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { 
+  Zap, 
+  Plus, 
+  Pencil, 
+  Trash2,
+  Bot,
+  Bell,
+  Tag,
+  UserPlus,
+  MessageSquare,
+  Clock,
+  AlertTriangle,
+  ArrowRight,
+  Loader2,
+  Play,
+  Pause
+} from "lucide-react";
+
+const typeConfig = {
+  assignment: { label: 'Atribuição', icon: UserPlus, color: 'bg-blue-100 text-blue-700' },
+  auto_reply: { label: 'Resposta Automática', icon: MessageSquare, color: 'bg-green-100 text-green-700' },
+  notification: { label: 'Notificação', icon: Bell, color: 'bg-amber-100 text-amber-700' },
+  tag: { label: 'Adicionar Tags', icon: Tag, color: 'bg-purple-100 text-purple-700' }
+};
+
+const triggerConfig = {
+  keyword: { label: 'Palavra-chave', description: 'Quando a mensagem contém certas palavras' },
+  classification: { label: 'Classificação IA', description: 'Baseado na classificação automática' },
+  priority: { label: 'Prioridade', description: 'Quando a prioridade for específica' },
+  inactivity: { label: 'Inatividade', description: 'Após X minutos sem resposta' },
+  new_conversation: { label: 'Nova Conversa', description: 'Quando uma nova conversa é iniciada' }
+};
+
+const departments = [
+  { value: 'sales', label: 'Vendas' },
+  { value: 'support', label: 'Suporte' },
+  { value: 'design', label: 'Design' },
+  { value: 'production', label: 'Produção' },
+  { value: 'finance', label: 'Financeiro' },
+  { value: 'management', label: 'Gerência' }
+];
+
+const classifications = [
+  { value: 'order', label: 'Pedido' },
+  { value: 'support', label: 'Suporte' },
+  { value: 'quote', label: 'Orçamento' },
+  { value: 'info', label: 'Informação' },
+  { value: 'complaint', label: 'Reclamação' },
+  { value: 'development', label: 'Desenvolvimento' },
+  { value: 'payment', label: 'Pagamento' }
+];
+
+const priorities = [
+  { value: 'urgent', label: 'Urgente' },
+  { value: 'high', label: 'Alta' },
+  { value: 'normal', label: 'Normal' },
+  { value: 'low', label: 'Baixa' }
+];
+
+export default function Automations() {
+  const queryClient = useQueryClient();
+  const [showModal, setShowModal] = useState(false);
+  const [editingRule, setEditingRule] = useState(null);
+  const [formData, setFormData] = useState({
+    name: '',
+    type: 'assignment',
+    trigger: 'keyword',
+    conditions: { keywords: [], classifications: [], priorities: [], inactivity_minutes: 30 },
+    actions: {},
+    is_active: true,
+    priority: 0
+  });
+  const [keywordInput, setKeywordInput] = useState('');
+
+  const { data: rules = [], isLoading } = useQuery({
+    queryKey: ['automation-rules'],
+    queryFn: () => base44.entities.AutomationRule.list('-priority', 100)
+  });
+
+  const { data: users = [] } = useQuery({
+    queryKey: ['users'],
+    queryFn: () => base44.entities.User.list('full_name', 100)
+  });
+
+  const createRule = useMutation({
+    mutationFn: (data) => base44.entities.AutomationRule.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['automation-rules']);
+      setShowModal(false);
+      resetForm();
+    }
+  });
+
+  const updateRule = useMutation({
+    mutationFn: ({ id, data }) => base44.entities.AutomationRule.update(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['automation-rules']);
+      setShowModal(false);
+      resetForm();
+    }
+  });
+
+  const deleteRule = useMutation({
+    mutationFn: (id) => base44.entities.AutomationRule.delete(id),
+    onSuccess: () => queryClient.invalidateQueries(['automation-rules'])
+  });
+
+  const toggleRule = useMutation({
+    mutationFn: ({ id, is_active }) => base44.entities.AutomationRule.update(id, { is_active }),
+    onSuccess: () => queryClient.invalidateQueries(['automation-rules'])
+  });
+
+  const resetForm = () => {
+    setFormData({
+      name: '',
+      type: 'assignment',
+      trigger: 'keyword',
+      conditions: { keywords: [], classifications: [], priorities: [], inactivity_minutes: 30 },
+      actions: {},
+      is_active: true,
+      priority: 0
+    });
+    setEditingRule(null);
+    setKeywordInput('');
+  };
+
+  const handleEdit = (rule) => {
+    setEditingRule(rule);
+    setFormData({
+      name: rule.name,
+      type: rule.type,
+      trigger: rule.trigger,
+      conditions: rule.conditions || { keywords: [], classifications: [], priorities: [], inactivity_minutes: 30 },
+      actions: rule.actions || {},
+      is_active: rule.is_active,
+      priority: rule.priority || 0
+    });
+    setShowModal(true);
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (editingRule) {
+      updateRule.mutate({ id: editingRule.id, data: formData });
+    } else {
+      createRule.mutate(formData);
+    }
+  };
+
+  const addKeyword = () => {
+    if (keywordInput.trim()) {
+      setFormData(prev => ({
+        ...prev,
+        conditions: {
+          ...prev.conditions,
+          keywords: [...(prev.conditions.keywords || []), keywordInput.trim().toLowerCase()]
+        }
+      }));
+      setKeywordInput('');
+    }
+  };
+
+  const removeKeyword = (index) => {
+    setFormData(prev => ({
+      ...prev,
+      conditions: {
+        ...prev.conditions,
+        keywords: prev.conditions.keywords.filter((_, i) => i !== index)
+      }
+    }));
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 p-6">
+      <div className="max-w-6xl mx-auto space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+              <Zap className="w-6 h-6 text-amber-500" />
+              Automações
+            </h1>
+            <p className="text-slate-500">Configure regras automáticas para otimizar o atendimento</p>
+          </div>
+          <Button onClick={() => { resetForm(); setShowModal(true); }}>
+            <Plus className="w-4 h-4 mr-2" />
+            Nova Regra
+          </Button>
+        </div>
+
+        {/* Stats */}
+        <div className="grid grid-cols-4 gap-4">
+          <Card className="border-0 shadow-sm">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-100 rounded-lg">
+                  <Zap className="w-5 h-5 text-blue-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">{rules.length}</p>
+                  <p className="text-xs text-slate-500">Total de Regras</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-0 shadow-sm">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-emerald-100 rounded-lg">
+                  <Play className="w-5 h-5 text-emerald-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">{rules.filter(r => r.is_active).length}</p>
+                  <p className="text-xs text-slate-500">Ativas</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-0 shadow-sm">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-amber-100 rounded-lg">
+                  <Bot className="w-5 h-5 text-amber-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">{rules.filter(r => r.type === 'auto_reply').length}</p>
+                  <p className="text-xs text-slate-500">Respostas Auto</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-0 shadow-sm">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-violet-100 rounded-lg">
+                  <ArrowRight className="w-5 h-5 text-violet-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">{rules.reduce((sum, r) => sum + (r.execution_count || 0), 0)}</p>
+                  <p className="text-xs text-slate-500">Execuções</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Rules List */}
+        <Card className="border-0 shadow-sm">
+          <CardHeader>
+            <CardTitle>Regras de Automação</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {isLoading ? (
+              <div className="space-y-3">
+                {[1, 2, 3].map(i => (
+                  <div key={i} className="h-20 bg-slate-100 rounded-lg animate-pulse" />
+                ))}
+              </div>
+            ) : rules.length === 0 ? (
+              <div className="text-center py-12">
+                <Zap className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+                <p className="text-slate-500">Nenhuma regra configurada</p>
+                <Button className="mt-4" onClick={() => setShowModal(true)}>
+                  Criar primeira regra
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {rules.map(rule => {
+                  const TypeIcon = typeConfig[rule.type]?.icon || Zap;
+                  return (
+                    <div 
+                      key={rule.id}
+                      className={`p-4 rounded-xl border ${rule.is_active ? 'bg-white' : 'bg-slate-50 opacity-60'}`}
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className={`p-2 rounded-lg ${typeConfig[rule.type]?.color}`}>
+                          <TypeIcon className="w-5 h-5" />
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-slate-900">{rule.name}</span>
+                            <Badge variant="outline" className="text-xs">
+                              {triggerConfig[rule.trigger]?.label}
+                            </Badge>
+                            <Badge className={typeConfig[rule.type]?.color}>
+                              {typeConfig[rule.type]?.label}
+                            </Badge>
+                          </div>
+                          <p className="text-sm text-slate-500 mt-1">
+                            {rule.trigger === 'keyword' && rule.conditions?.keywords?.length > 0 && (
+                              <>Palavras: {rule.conditions.keywords.slice(0, 3).join(', ')}{rule.conditions.keywords.length > 3 && '...'}</>
+                            )}
+                            {rule.trigger === 'classification' && rule.conditions?.classifications?.length > 0 && (
+                              <>Classificações: {rule.conditions.classifications.join(', ')}</>
+                            )}
+                            {rule.trigger === 'inactivity' && (
+                              <>Após {rule.conditions?.inactivity_minutes} minutos de inatividade</>
+                            )}
+                            {rule.trigger === 'new_conversation' && 'Quando uma nova conversa é iniciada'}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs text-slate-400">
+                            {rule.execution_count || 0} execuções
+                          </span>
+                          <Switch
+                            checked={rule.is_active}
+                            onCheckedChange={(checked) => toggleRule.mutate({ id: rule.id, is_active: checked })}
+                          />
+                          <Button variant="ghost" size="icon" onClick={() => handleEdit(rule)}>
+                            <Pencil className="w-4 h-4" />
+                          </Button>
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="text-red-600"
+                            onClick={() => deleteRule.mutate(rule.id)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Modal */}
+        <Dialog open={showModal} onOpenChange={setShowModal}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>{editingRule ? 'Editar Regra' : 'Nova Regra de Automação'}</DialogTitle>
+            </DialogHeader>
+
+            <form onSubmit={handleSubmit} className="space-y-6">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="col-span-2 space-y-2">
+                  <Label>Nome da Regra</Label>
+                  <Input
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    placeholder="Ex: Direcionar reclamações para suporte"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Tipo de Automação</Label>
+                  <Select value={formData.type} onValueChange={(v) => setFormData({ ...formData, type: v })}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(typeConfig).map(([key, config]) => (
+                        <SelectItem key={key} value={key}>{config.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Gatilho</Label>
+                  <Select value={formData.trigger} onValueChange={(v) => setFormData({ ...formData, trigger: v })}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(triggerConfig).map(([key, config]) => (
+                        <SelectItem key={key} value={key}>{config.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* Conditions based on trigger */}
+              <div className="space-y-4 p-4 bg-slate-50 rounded-xl">
+                <h4 className="font-semibold">Condições</h4>
+
+                {formData.trigger === 'keyword' && (
+                  <div className="space-y-2">
+                    <Label>Palavras-chave</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        value={keywordInput}
+                        onChange={(e) => setKeywordInput(e.target.value)}
+                        placeholder="Digite uma palavra-chave"
+                        onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addKeyword())}
+                      />
+                      <Button type="button" onClick={addKeyword}>Adicionar</Button>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {formData.conditions.keywords?.map((kw, idx) => (
+                        <Badge key={idx} variant="secondary" className="cursor-pointer" onClick={() => removeKeyword(idx)}>
+                          {kw} ×
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {formData.trigger === 'classification' && (
+                  <div className="space-y-2">
+                    <Label>Classificações</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {classifications.map(c => (
+                        <Badge
+                          key={c.value}
+                          variant={formData.conditions.classifications?.includes(c.value) ? 'default' : 'outline'}
+                          className="cursor-pointer"
+                          onClick={() => {
+                            const current = formData.conditions.classifications || [];
+                            const newList = current.includes(c.value)
+                              ? current.filter(x => x !== c.value)
+                              : [...current, c.value];
+                            setFormData({
+                              ...formData,
+                              conditions: { ...formData.conditions, classifications: newList }
+                            });
+                          }}
+                        >
+                          {c.label}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {formData.trigger === 'priority' && (
+                  <div className="space-y-2">
+                    <Label>Prioridades</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {priorities.map(p => (
+                        <Badge
+                          key={p.value}
+                          variant={formData.conditions.priorities?.includes(p.value) ? 'default' : 'outline'}
+                          className="cursor-pointer"
+                          onClick={() => {
+                            const current = formData.conditions.priorities || [];
+                            const newList = current.includes(p.value)
+                              ? current.filter(x => x !== p.value)
+                              : [...current, p.value];
+                            setFormData({
+                              ...formData,
+                              conditions: { ...formData.conditions, priorities: newList }
+                            });
+                          }}
+                        >
+                          {p.label}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {formData.trigger === 'inactivity' && (
+                  <div className="space-y-2">
+                    <Label>Minutos de inatividade</Label>
+                    <Input
+                      type="number"
+                      min="5"
+                      value={formData.conditions.inactivity_minutes || 30}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        conditions: { ...formData.conditions, inactivity_minutes: parseInt(e.target.value) }
+                      })}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Actions based on type */}
+              <div className="space-y-4 p-4 bg-blue-50 rounded-xl">
+                <h4 className="font-semibold">Ações</h4>
+
+                {formData.type === 'assignment' && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Atribuir ao Setor</Label>
+                      <Select 
+                        value={formData.actions.assign_to_department || ''} 
+                        onValueChange={(v) => setFormData({
+                          ...formData,
+                          actions: { ...formData.actions, assign_to_department: v }
+                        })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecione" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {departments.map(d => (
+                            <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Ou Atribuir ao Usuário</Label>
+                      <Select 
+                        value={formData.actions.assign_to_user || ''} 
+                        onValueChange={(v) => setFormData({
+                          ...formData,
+                          actions: { ...formData.actions, assign_to_user: v }
+                        })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecione" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {users.map(u => (
+                            <SelectItem key={u.id} value={u.email}>{u.full_name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                )}
+
+                {formData.type === 'auto_reply' && (
+                  <div className="space-y-2">
+                    <Label>Mensagem de Resposta</Label>
+                    <Textarea
+                      value={formData.actions.send_message || ''}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        actions: { ...formData.actions, send_message: e.target.value }
+                      })}
+                      placeholder="Digite a mensagem automática..."
+                      rows={4}
+                    />
+                  </div>
+                )}
+
+                {formData.type === 'notification' && (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label>Notificar Setor</Label>
+                      <Select 
+                        value={formData.actions.notify_department || ''} 
+                        onValueChange={(v) => setFormData({
+                          ...formData,
+                          actions: { ...formData.actions, notify_department: v }
+                        })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecione" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {departments.map(d => (
+                            <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                )}
+
+                {formData.type === 'tag' && (
+                  <div className="space-y-2">
+                    <Label>Tags a adicionar</Label>
+                    <Input
+                      placeholder="Digite as tags separadas por vírgula"
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        actions: { ...formData.actions, add_tags: e.target.value.split(',').map(t => t.trim()).filter(Boolean) }
+                      })}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <Button type="button" variant="outline" className="flex-1" onClick={() => setShowModal(false)}>
+                  Cancelar
+                </Button>
+                <Button type="submit" className="flex-1" disabled={createRule.isPending || updateRule.isPending}>
+                  {(createRule.isPending || updateRule.isPending) && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                  {editingRule ? 'Salvar' : 'Criar Regra'}
+                </Button>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </div>
+  );
+}

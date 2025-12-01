@@ -1,0 +1,401 @@
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Plus, Edit, Trash2, Layers, X, Palette } from "lucide-react";
+
+const UNITS = [
+  { value: 'metro', label: 'Metro' },
+  { value: 'kg', label: 'Kg' },
+  { value: 'unidade', label: 'Unidade' },
+  { value: 'rolo', label: 'Rolo' },
+  { value: 'folha', label: 'Folha' },
+];
+
+export default function Materials() {
+  const queryClient = useQueryClient();
+  const [showModal, setShowModal] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [formData, setFormData] = useState({
+    code: '',
+    name: '',
+    display_name: '',
+    description: '',
+    unit: 'metro',
+    base_cost: '',
+    color_variants: [],
+    is_active: true,
+    order: 0
+  });
+  const [newColorName, setNewColorName] = useState('');
+  const [newColorCode, setNewColorCode] = useState('#000000');
+
+  const { data: materials = [], isLoading } = useQuery({
+    queryKey: ['materials'],
+    queryFn: () => base44.entities.Material.list('order', 100)
+  });
+
+  const mutation = useMutation({
+    mutationFn: async (data) => {
+      const payload = {
+        ...data,
+        base_cost: parseFloat(data.base_cost) || 0,
+        order: parseInt(data.order) || 0
+      };
+      if (editing) {
+        return base44.entities.Material.update(editing.id, payload);
+      }
+      return base44.entities.Material.create(payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['materials']);
+      handleClose();
+    }
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id) => base44.entities.Material.delete(id),
+    onSuccess: () => queryClient.invalidateQueries(['materials'])
+  });
+
+  const handleOpen = (item = null) => {
+    if (item) {
+      setEditing(item);
+      setFormData({
+        code: item.code || '',
+        name: item.name || '',
+        display_name: item.display_name || '',
+        description: item.description || '',
+        unit: item.unit || 'metro',
+        base_cost: item.base_cost?.toString() || '',
+        color_variants: item.color_variants || [],
+        is_active: item.is_active !== false,
+        order: item.order || 0
+      });
+    } else {
+      setEditing(null);
+      setFormData({
+        code: '',
+        name: '',
+        display_name: '',
+        description: '',
+        unit: 'metro',
+        base_cost: '',
+        color_variants: [],
+        is_active: true,
+        order: materials.length
+      });
+    }
+    setShowModal(true);
+  };
+
+  const handleClose = () => {
+    setShowModal(false);
+    setEditing(null);
+    setNewColorName('');
+    setNewColorCode('#000000');
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    mutation.mutate(formData);
+  };
+
+  const addColorVariant = () => {
+    if (!newColorName.trim()) return;
+    setFormData(prev => ({
+      ...prev,
+      color_variants: [
+        ...prev.color_variants,
+        { color_name: newColorName.trim(), color_code: newColorCode, is_available: true }
+      ]
+    }));
+    setNewColorName('');
+    setNewColorCode('#000000');
+  };
+
+  const removeColorVariant = (index) => {
+    setFormData(prev => ({
+      ...prev,
+      color_variants: prev.color_variants.filter((_, i) => i !== index)
+    }));
+  };
+
+  const toggleColorAvailability = (index) => {
+    setFormData(prev => ({
+      ...prev,
+      color_variants: prev.color_variants.map((c, i) => 
+        i === index ? { ...c, is_available: !c.is_available } : c
+      )
+    }));
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 p-6">
+      <div className="max-w-5xl mx-auto space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Matérias Primas</h1>
+            <p className="text-slate-500">Cadastre materiais com nome interno e nome para cliente</p>
+          </div>
+          <Button onClick={() => handleOpen()} className="bg-slate-800 hover:bg-slate-700">
+            <Plus className="w-4 h-4 mr-2" />
+            Nova Matéria Prima
+          </Button>
+        </div>
+
+        <Card className="border-0 shadow-sm">
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Código</TableHead>
+                  <TableHead>Nome Interno</TableHead>
+                  <TableHead>Nome p/ Cliente</TableHead>
+                  <TableHead>Cores</TableHead>
+                  <TableHead className="text-right">Custo Base</TableHead>
+                  <TableHead className="text-center">Status</TableHead>
+                  <TableHead></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {isLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-8 text-slate-400">
+                      Carregando...
+                    </TableCell>
+                  </TableRow>
+                ) : materials.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-8 text-slate-400">
+                      <Layers className="w-10 h-10 mx-auto mb-2 opacity-50" />
+                      Nenhuma matéria prima cadastrada
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  materials.map(m => (
+                    <TableRow key={m.id}>
+                      <TableCell className="font-mono font-medium">{m.code}</TableCell>
+                      <TableCell>{m.name}</TableCell>
+                      <TableCell className="text-violet-600 font-medium">{m.display_name || '-'}</TableCell>
+                      <TableCell>
+                        <div className="flex gap-1">
+                          {m.color_variants?.slice(0, 5).map((c, idx) => (
+                            <div 
+                              key={idx}
+                              className="w-5 h-5 rounded-full border border-slate-200"
+                              style={{ backgroundColor: c.color_code }}
+                              title={c.color_name}
+                            />
+                          ))}
+                          {m.color_variants?.length > 5 && (
+                            <span className="text-xs text-slate-500">+{m.color_variants.length - 5}</span>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">R$ {m.base_cost?.toFixed(2) || '0,00'}</TableCell>
+                      <TableCell className="text-center">
+                        <Badge className={m.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}>
+                          {m.is_active ? 'Ativo' : 'Inativo'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex gap-1 justify-end">
+                          <Button variant="ghost" size="icon" onClick={() => handleOpen(m)}>
+                            <Edit className="w-4 h-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="text-red-600" onClick={() => deleteMutation.mutate(m.id)}>
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Dialog open={showModal} onOpenChange={setShowModal}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editing ? 'Editar Matéria Prima' : 'Nova Matéria Prima'}</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Código *</Label>
+                <Input
+                  value={formData.code}
+                  onChange={(e) => setFormData({ ...formData, code: e.target.value.toUpperCase() })}
+                  placeholder="SI2050"
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Unidade</Label>
+                <Select value={formData.unit} onValueChange={(v) => setFormData({ ...formData, unit: v })}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {UNITS.map(u => (
+                      <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Nome Interno (real) *</Label>
+              <Input
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                placeholder="Ecoline SI2050"
+                required
+              />
+              <p className="text-xs text-slate-500">Nome usado internamente pela equipe</p>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Nome para Cliente</Label>
+              <Input
+                value={formData.display_name}
+                onChange={(e) => setFormData({ ...formData, display_name: e.target.value })}
+                placeholder="Couro Sintético Premium"
+              />
+              <p className="text-xs text-slate-500">Nome que o cliente verá no portal</p>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Descrição</Label>
+              <Textarea
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                placeholder="Descrição do material"
+                rows={2}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Custo Base (R$)</Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={formData.base_cost}
+                onChange={(e) => setFormData({ ...formData, base_cost: e.target.value })}
+                placeholder="0,00"
+              />
+            </div>
+
+            {/* Color Variants */}
+            <div className="space-y-3">
+              <Label className="flex items-center gap-2">
+                <Palette className="w-4 h-4" />
+                Variantes de Cor
+              </Label>
+              
+              {formData.color_variants.length > 0 && (
+                <div className="space-y-2">
+                  {formData.color_variants.map((color, index) => (
+                    <div key={index} className="flex items-center gap-2 p-2 bg-slate-50 rounded-lg">
+                      <div 
+                        className="w-8 h-8 rounded-lg border"
+                        style={{ backgroundColor: color.color_code }}
+                      />
+                      <span className="flex-1 text-sm font-medium">{color.color_name}</span>
+                      <Badge className={color.is_available ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}>
+                        {color.is_available ? 'Disponível' : 'Indisponível'}
+                      </Badge>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => toggleColorAvailability(index)}
+                      >
+                        <Switch checked={color.is_available} />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-red-600"
+                        onClick={() => removeColorVariant(index)}
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <Input
+                  value={newColorName}
+                  onChange={(e) => setNewColorName(e.target.value)}
+                  placeholder="Nome da cor (ex: Marrom)"
+                  className="flex-1"
+                />
+                <Input
+                  type="color"
+                  value={newColorCode}
+                  onChange={(e) => setNewColorCode(e.target.value)}
+                  className="w-14 h-10 p-1"
+                />
+                <Button type="button" variant="outline" onClick={addColorVariant}>
+                  <Plus className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={formData.is_active}
+                onCheckedChange={(v) => setFormData({ ...formData, is_active: v })}
+              />
+              <Label>Ativo</Label>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-4 border-t">
+              <Button type="button" variant="outline" onClick={handleClose}>Cancelar</Button>
+              <Button type="submit" disabled={mutation.isPending}>
+                {mutation.isPending ? 'Salvando...' : 'Salvar'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

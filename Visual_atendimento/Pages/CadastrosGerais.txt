@@ -1,0 +1,749 @@
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { 
+  Plus, 
+  Edit, 
+  Trash2, 
+  Palette,
+  Settings,
+  FolderOpen,
+  Tag,
+  Loader2,
+  Search,
+  X,
+  ToggleLeft,
+  ToggleRight,
+  Layers
+} from "lucide-react";
+
+// ==================== PROCESSOS ====================
+function ProcessosTab() {
+  const queryClient = useQueryClient();
+  const [showModal, setShowModal] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [formData, setFormData] = useState({
+    code: '', name: '', description: '', base_price_per_unit: 0, setup_price: 0, price_per_color: 0, max_colors: 0
+  });
+
+  const { data: processes = [], isLoading } = useQuery({
+    queryKey: ['process-types'],
+    queryFn: () => base44.entities.ProcessType.list('order', 100)
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: (data) => editing 
+      ? base44.entities.ProcessType.update(editing.id, data)
+      : base44.entities.ProcessType.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['process-types']);
+      setShowModal(false);
+      resetForm();
+    }
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id) => base44.entities.ProcessType.delete(id),
+    onSuccess: () => queryClient.invalidateQueries(['process-types'])
+  });
+
+  const resetForm = () => {
+    setFormData({ code: '', name: '', description: '', base_price_per_unit: 0, setup_price: 0, price_per_color: 0, max_colors: 0 });
+    setEditing(null);
+  };
+
+  const openEdit = (item) => {
+    setEditing(item);
+    setFormData({
+      code: item.code || '',
+      name: item.name || '',
+      description: item.description || '',
+      base_price_per_unit: item.base_price_per_unit || 0,
+      setup_price: item.setup_price || 0,
+      price_per_color: item.price_per_color || 0,
+      max_colors: item.max_colors || 0
+    });
+    setShowModal(true);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <p className="text-slate-500">{processes.length} processos cadastrados</p>
+        <Button onClick={() => { resetForm(); setShowModal(true); }}>
+          <Plus className="w-4 h-4 mr-2" /> Novo Processo
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-slate-400" /></div>
+      ) : (
+        <div className="grid gap-3">
+          {processes.map(proc => (
+            <Card key={proc.id} className="border-0 shadow-sm">
+              <CardContent className="p-4 flex items-center gap-4">
+                <div className="w-12 h-12 rounded-xl bg-violet-100 flex items-center justify-center">
+                  <Settings className="w-6 h-6 text-violet-600" />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="font-mono">{proc.code}</Badge>
+                    <span className="font-semibold">{proc.name}</span>
+                  </div>
+                  <p className="text-sm text-slate-500">
+                    R$ {proc.base_price_per_unit?.toFixed(2)}/un • Setup: R$ {proc.setup_price?.toFixed(2)}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="ghost" size="icon" onClick={() => openEdit(proc)}><Edit className="w-4 h-4" /></Button>
+                  <Button variant="ghost" size="icon" className="text-red-600" onClick={() => deleteMutation.mutate(proc.id)}><Trash2 className="w-4 h-4" /></Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      <Dialog open={showModal} onOpenChange={setShowModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editing ? 'Editar' : 'Novo'} Processo</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Código *</Label>
+                <Input value={formData.code} onChange={e => setFormData({...formData, code: e.target.value})} placeholder="Ex: SILK" />
+              </div>
+              <div className="space-y-2">
+                <Label>Nome *</Label>
+                <Input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="Ex: Silk Screen" />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Descrição</Label>
+              <Textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} rows={2} />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Preço por unidade (R$)</Label>
+                <Input type="number" step="0.01" value={formData.base_price_per_unit} onChange={e => setFormData({...formData, base_price_per_unit: parseFloat(e.target.value) || 0})} />
+              </div>
+              <div className="space-y-2">
+                <Label>Preço de Setup (R$)</Label>
+                <Input type="number" step="0.01" value={formData.setup_price} onChange={e => setFormData({...formData, setup_price: parseFloat(e.target.value) || 0})} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Preço por cor (R$)</Label>
+                <Input type="number" step="0.01" value={formData.price_per_color} onChange={e => setFormData({...formData, price_per_color: parseFloat(e.target.value) || 0})} />
+              </div>
+              <div className="space-y-2">
+                <Label>Máx. cores</Label>
+                <Input type="number" value={formData.max_colors} onChange={e => setFormData({...formData, max_colors: parseInt(e.target.value) || 0})} />
+              </div>
+            </div>
+            <div className="flex gap-3 pt-4">
+              <Button variant="outline" className="flex-1" onClick={() => setShowModal(false)}>Cancelar</Button>
+              <Button className="flex-1" onClick={() => saveMutation.mutate({...formData, is_active: true})} disabled={!formData.code || !formData.name || saveMutation.isPending}>
+                {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Salvar'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ==================== MATERIAIS ====================
+function MateriaisTab() {
+  const queryClient = useQueryClient();
+  const [showModal, setShowModal] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [formData, setFormData] = useState({
+    code: '', name: '', display_name: '', description: '', unit: 'metro', base_cost: 0, color_variants: []
+  });
+  const [newColor, setNewColor] = useState({ color_name: '', color_code: '#000000' });
+
+  const { data: materials = [], isLoading } = useQuery({
+    queryKey: ['materials'],
+    queryFn: () => base44.entities.Material.list('order', 100)
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: (data) => editing 
+      ? base44.entities.Material.update(editing.id, data)
+      : base44.entities.Material.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['materials']);
+      setShowModal(false);
+      resetForm();
+    }
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id) => base44.entities.Material.delete(id),
+    onSuccess: () => queryClient.invalidateQueries(['materials'])
+  });
+
+  const resetForm = () => {
+    setFormData({ code: '', name: '', display_name: '', description: '', unit: 'metro', base_cost: 0, color_variants: [] });
+    setEditing(null);
+    setNewColor({ color_name: '', color_code: '#000000' });
+  };
+
+  const openEdit = (item) => {
+    setEditing(item);
+    setFormData({
+      code: item.code || '',
+      name: item.name || '',
+      display_name: item.display_name || '',
+      description: item.description || '',
+      unit: item.unit || 'metro',
+      base_cost: item.base_cost || 0,
+      color_variants: item.color_variants || []
+    });
+    setShowModal(true);
+  };
+
+  const addColor = () => {
+    if (newColor.color_name) {
+      setFormData({...formData, color_variants: [...formData.color_variants, {...newColor, is_available: true}]});
+      setNewColor({ color_name: '', color_code: '#000000' });
+    }
+  };
+
+  const removeColor = (idx) => {
+    setFormData({...formData, color_variants: formData.color_variants.filter((_, i) => i !== idx)});
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <p className="text-slate-500">{materials.length} materiais cadastrados</p>
+        <Button onClick={() => { resetForm(); setShowModal(true); }}>
+          <Plus className="w-4 h-4 mr-2" /> Novo Material
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-slate-400" /></div>
+      ) : (
+        <div className="grid gap-3">
+          {materials.map(mat => (
+            <Card key={mat.id} className="border-0 shadow-sm">
+              <CardContent className="p-4 flex items-center gap-4">
+                <div className="w-12 h-12 rounded-xl bg-amber-100 flex items-center justify-center">
+                  <Palette className="w-6 h-6 text-amber-600" />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="font-mono">{mat.code}</Badge>
+                    <span className="font-semibold">{mat.display_name || mat.name}</span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-sm text-slate-500">R$ {mat.base_cost?.toFixed(2)}/{mat.unit}</span>
+                    {mat.color_variants?.length > 0 && (
+                      <div className="flex gap-1">
+                        {mat.color_variants.slice(0, 5).map((c, i) => (
+                          <div key={i} className="w-4 h-4 rounded-full border" style={{backgroundColor: c.color_code}} title={c.color_name} />
+                        ))}
+                        {mat.color_variants.length > 5 && <span className="text-xs text-slate-400">+{mat.color_variants.length - 5}</span>}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="ghost" size="icon" onClick={() => openEdit(mat)}><Edit className="w-4 h-4" /></Button>
+                  <Button variant="ghost" size="icon" className="text-red-600" onClick={() => deleteMutation.mutate(mat.id)}><Trash2 className="w-4 h-4" /></Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      <Dialog open={showModal} onOpenChange={setShowModal}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{editing ? 'Editar' : 'Novo'} Material</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 max-h-[70vh] overflow-y-auto">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Código *</Label>
+                <Input value={formData.code} onChange={e => setFormData({...formData, code: e.target.value})} placeholder="Ex: SI2050" />
+              </div>
+              <div className="space-y-2">
+                <Label>Nome Interno *</Label>
+                <Input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Nome de Exibição (cliente)</Label>
+              <Input value={formData.display_name} onChange={e => setFormData({...formData, display_name: e.target.value})} placeholder="Ex: Couro Sintético" />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Unidade</Label>
+                <Select value={formData.unit} onValueChange={v => setFormData({...formData, unit: v})}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="metro">Metro</SelectItem>
+                    <SelectItem value="kg">Kg</SelectItem>
+                    <SelectItem value="unidade">Unidade</SelectItem>
+                    <SelectItem value="rolo">Rolo</SelectItem>
+                    <SelectItem value="folha">Folha</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Custo Base (R$)</Label>
+                <Input type="number" step="0.01" value={formData.base_cost} onChange={e => setFormData({...formData, base_cost: parseFloat(e.target.value) || 0})} />
+              </div>
+            </div>
+
+            {/* Cores */}
+            <div className="space-y-2">
+              <Label>Variantes de Cor</Label>
+              <div className="flex gap-2">
+                <Input placeholder="Nome da cor" value={newColor.color_name} onChange={e => setNewColor({...newColor, color_name: e.target.value})} className="flex-1" />
+                <Input type="color" value={newColor.color_code} onChange={e => setNewColor({...newColor, color_code: e.target.value})} className="w-14" />
+                <Button type="button" variant="outline" onClick={addColor}><Plus className="w-4 h-4" /></Button>
+              </div>
+              {formData.color_variants.length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {formData.color_variants.map((c, i) => (
+                    <div key={i} className="flex items-center gap-2 px-2 py-1 bg-slate-100 rounded-lg">
+                      <div className="w-4 h-4 rounded-full border" style={{backgroundColor: c.color_code}} />
+                      <span className="text-sm">{c.color_name}</span>
+                      <button onClick={() => removeColor(i)} className="text-slate-400 hover:text-red-500"><X className="w-3 h-3" /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-3 pt-4">
+              <Button variant="outline" className="flex-1" onClick={() => setShowModal(false)}>Cancelar</Button>
+              <Button className="flex-1" onClick={() => saveMutation.mutate({...formData, is_active: true})} disabled={!formData.code || !formData.name || saveMutation.isPending}>
+                {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Salvar'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ==================== CATEGORIAS ====================
+function CategoriasTab() {
+  const queryClient = useQueryClient();
+  const [showModal, setShowModal] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [formData, setFormData] = useState({ name: '', description: '', order: 0 });
+
+  const { data: categories = [], isLoading } = useQuery({
+    queryKey: ['categories'],
+    queryFn: () => base44.entities.Category.list('order', 100)
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: (data) => editing 
+      ? base44.entities.Category.update(editing.id, data)
+      : base44.entities.Category.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['categories']);
+      setShowModal(false);
+      resetForm();
+    }
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id) => base44.entities.Category.delete(id),
+    onSuccess: () => queryClient.invalidateQueries(['categories'])
+  });
+
+  const toggleActiveMutation = useMutation({
+    mutationFn: ({ id, is_active }) => base44.entities.Category.update(id, { is_active }),
+    onSuccess: () => queryClient.invalidateQueries(['categories'])
+  });
+
+  const resetForm = () => {
+    setFormData({ name: '', description: '', order: 0 });
+    setEditing(null);
+  };
+
+  const openEdit = (item) => {
+    setEditing(item);
+    setFormData({ name: item.name || '', description: item.description || '', order: item.order || 0 });
+    setShowModal(true);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <p className="text-slate-500">{categories.length} categorias cadastradas</p>
+        <Button onClick={() => { resetForm(); setShowModal(true); }}>
+          <Plus className="w-4 h-4 mr-2" /> Nova Categoria
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-slate-400" /></div>
+      ) : (
+        <div className="grid gap-3">
+          {categories.map(cat => (
+            <Card key={cat.id} className={`border-0 shadow-sm ${cat.is_active === false ? 'opacity-50' : ''}`}>
+              <CardContent className="p-4 flex items-center gap-4">
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${cat.is_active === false ? 'bg-slate-100' : 'bg-blue-100'}`}>
+                  <FolderOpen className={`w-6 h-6 ${cat.is_active === false ? 'text-slate-400' : 'text-blue-600'}`} />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold">{cat.name}</span>
+                    {cat.is_active === false && <Badge variant="outline" className="text-xs text-slate-500">Inativa</Badge>}
+                  </div>
+                  {cat.description && <p className="text-sm text-slate-500">{cat.description}</p>}
+                </div>
+                <div className="flex gap-2">
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    onClick={() => toggleActiveMutation.mutate({ id: cat.id, is_active: cat.is_active === false ? true : false })}
+                    title={cat.is_active === false ? 'Ativar categoria' : 'Desativar categoria'}
+                  >
+                    {cat.is_active === false ? <ToggleLeft className="w-5 h-5 text-slate-400" /> : <ToggleRight className="w-5 h-5 text-emerald-600" />}
+                  </Button>
+                  <Button variant="ghost" size="icon" onClick={() => openEdit(cat)}><Edit className="w-4 h-4" /></Button>
+                  <Button variant="ghost" size="icon" className="text-red-600" onClick={() => deleteMutation.mutate(cat.id)}><Trash2 className="w-4 h-4" /></Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      <Dialog open={showModal} onOpenChange={setShowModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editing ? 'Editar' : 'Nova'} Categoria</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Nome *</Label>
+              <Input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="Ex: Etiquetas Tecidas" />
+            </div>
+            <div className="space-y-2">
+              <Label>Descrição</Label>
+              <Textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} rows={2} />
+            </div>
+            <div className="space-y-2">
+              <Label>Ordem</Label>
+              <Input type="number" value={formData.order} onChange={e => setFormData({...formData, order: parseInt(e.target.value) || 0})} />
+            </div>
+            <div className="flex gap-3 pt-4">
+              <Button variant="outline" className="flex-1" onClick={() => setShowModal(false)}>Cancelar</Button>
+              <Button className="flex-1" onClick={() => saveMutation.mutate({...formData, is_active: true})} disabled={!formData.name || saveMutation.isPending}>
+                {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Salvar'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ==================== COLEÇÕES ====================
+function ColecoesTab() {
+  const queryClient = useQueryClient();
+  const [showModal, setShowModal] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [formData, setFormData] = useState({ name: '', description: '', order: 0 });
+
+  const { data: collections = [], isLoading } = useQuery({
+    queryKey: ['collections'],
+    queryFn: () => base44.entities.Collection.list('order', 100)
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: (data) => editing 
+      ? base44.entities.Collection.update(editing.id, data)
+      : base44.entities.Collection.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['collections']);
+      setShowModal(false);
+      resetForm();
+    }
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id) => base44.entities.Collection.delete(id),
+    onSuccess: () => queryClient.invalidateQueries(['collections'])
+  });
+
+  const toggleActiveMutation = useMutation({
+    mutationFn: ({ id, is_active }) => base44.entities.Collection.update(id, { is_active }),
+    onSuccess: () => queryClient.invalidateQueries(['collections'])
+  });
+
+  const resetForm = () => {
+    setFormData({ name: '', description: '', order: 0 });
+    setEditing(null);
+  };
+
+  const openEdit = (item) => {
+    setEditing(item);
+    setFormData({ name: item.name || '', description: item.description || '', order: item.order || 0 });
+    setShowModal(true);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <p className="text-slate-500">{collections.length} coleções cadastradas</p>
+        <Button onClick={() => { resetForm(); setShowModal(true); }}>
+          <Plus className="w-4 h-4 mr-2" /> Nova Coleção
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-slate-400" /></div>
+      ) : (
+        <div className="grid gap-3">
+          {collections.map(col => (
+            <Card key={col.id} className={`border-0 shadow-sm ${col.is_active === false ? 'opacity-50' : ''}`}>
+              <CardContent className="p-4 flex items-center gap-4">
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${col.is_active === false ? 'bg-slate-100' : 'bg-indigo-100'}`}>
+                  <Layers className={`w-6 h-6 ${col.is_active === false ? 'text-slate-400' : 'text-indigo-600'}`} />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold">{col.name}</span>
+                    {col.is_active === false && <Badge variant="outline" className="text-xs text-slate-500">Inativa</Badge>}
+                  </div>
+                  {col.description && <p className="text-sm text-slate-500">{col.description}</p>}
+                </div>
+                <div className="flex gap-2">
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    onClick={() => toggleActiveMutation.mutate({ id: col.id, is_active: col.is_active === false ? true : false })}
+                    title={col.is_active === false ? 'Ativar coleção' : 'Desativar coleção'}
+                  >
+                    {col.is_active === false ? <ToggleLeft className="w-5 h-5 text-slate-400" /> : <ToggleRight className="w-5 h-5 text-emerald-600" />}
+                  </Button>
+                  <Button variant="ghost" size="icon" onClick={() => openEdit(col)}><Edit className="w-4 h-4" /></Button>
+                  <Button variant="ghost" size="icon" className="text-red-600" onClick={() => deleteMutation.mutate(col.id)}><Trash2 className="w-4 h-4" /></Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      <Dialog open={showModal} onOpenChange={setShowModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editing ? 'Editar' : 'Nova'} Coleção</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Nome *</Label>
+              <Input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="Ex: Coleção Verão 2024" />
+            </div>
+            <div className="space-y-2">
+              <Label>Descrição</Label>
+              <Textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} rows={2} />
+            </div>
+            <div className="space-y-2">
+              <Label>Ordem</Label>
+              <Input type="number" value={formData.order} onChange={e => setFormData({...formData, order: parseInt(e.target.value) || 0})} />
+            </div>
+            <div className="flex gap-3 pt-4">
+              <Button variant="outline" className="flex-1" onClick={() => setShowModal(false)}>Cancelar</Button>
+              <Button className="flex-1" onClick={() => saveMutation.mutate({...formData, is_active: true})} disabled={!formData.name || saveMutation.isPending}>
+                {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Salvar'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ==================== TAGS ====================
+function TagsTab() {
+  const queryClient = useQueryClient();
+  const [showModal, setShowModal] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [formData, setFormData] = useState({ name: '', color: '#6366f1', description: '' });
+
+  const { data: tags = [], isLoading } = useQuery({
+    queryKey: ['conversation-tags'],
+    queryFn: () => base44.entities.ConversationTag.list('name', 100)
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: (data) => editing 
+      ? base44.entities.ConversationTag.update(editing.id, data)
+      : base44.entities.ConversationTag.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['conversation-tags']);
+      setShowModal(false);
+      resetForm();
+    }
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id) => base44.entities.ConversationTag.delete(id),
+    onSuccess: () => queryClient.invalidateQueries(['conversation-tags'])
+  });
+
+  const resetForm = () => {
+    setFormData({ name: '', color: '#6366f1', description: '' });
+    setEditing(null);
+  };
+
+  const openEdit = (item) => {
+    setEditing(item);
+    setFormData({ name: item.name || '', color: item.color || '#6366f1', description: item.description || '' });
+    setShowModal(true);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <p className="text-slate-500">{tags.length} tags cadastradas</p>
+        <Button onClick={() => { resetForm(); setShowModal(true); }}>
+          <Plus className="w-4 h-4 mr-2" /> Nova Tag
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-slate-400" /></div>
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          {tags.map(tag => (
+            <Card key={tag.id} className="border-0 shadow-sm">
+              <CardContent className="p-4 flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{backgroundColor: tag.color + '20'}}>
+                  <Tag className="w-4 h-4" style={{color: tag.color}} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <span className="font-medium truncate block">{tag.name}</span>
+                </div>
+                <div className="flex gap-1">
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(tag)}><Edit className="w-3 h-3" /></Button>
+                  <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600" onClick={() => deleteMutation.mutate(tag.id)}><Trash2 className="w-3 h-3" /></Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      <Dialog open={showModal} onOpenChange={setShowModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editing ? 'Editar' : 'Nova'} Tag</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-4">
+              <div className="col-span-2 space-y-2">
+                <Label>Nome *</Label>
+                <Input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="Ex: VIP" />
+              </div>
+              <div className="space-y-2">
+                <Label>Cor</Label>
+                <Input type="color" value={formData.color} onChange={e => setFormData({...formData, color: e.target.value})} className="h-10" />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Descrição</Label>
+              <Textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} rows={2} />
+            </div>
+            <div className="flex gap-3 pt-4">
+              <Button variant="outline" className="flex-1" onClick={() => setShowModal(false)}>Cancelar</Button>
+              <Button className="flex-1" onClick={() => saveMutation.mutate({...formData, is_active: true})} disabled={!formData.name || saveMutation.isPending}>
+                {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Salvar'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ==================== PÁGINA PRINCIPAL ====================
+export default function CadastrosGerais() {
+  const [activeTab, setActiveTab] = useState('processos');
+
+  return (
+    <div className="min-h-screen bg-slate-50 p-6">
+      <div className="max-w-5xl mx-auto space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Cadastros Gerais</h1>
+          <p className="text-slate-500">Gerencie processos, materiais, categorias, coleções e tags</p>
+        </div>
+
+        <Card className="border-0 shadow-sm">
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <CardHeader className="pb-0">
+              <TabsList className="w-full justify-start bg-slate-100">
+                <TabsTrigger value="processos" className="flex items-center gap-2">
+                  <Settings className="w-4 h-4" /> Processos
+                </TabsTrigger>
+                <TabsTrigger value="materiais" className="flex items-center gap-2">
+                  <Palette className="w-4 h-4" /> Materiais
+                </TabsTrigger>
+                <TabsTrigger value="categorias" className="flex items-center gap-2">
+                  <FolderOpen className="w-4 h-4" /> Categorias
+                </TabsTrigger>
+                <TabsTrigger value="colecoes" className="flex items-center gap-2">
+                  <Layers className="w-4 h-4" /> Coleções
+                </TabsTrigger>
+                <TabsTrigger value="tags" className="flex items-center gap-2">
+                  <Tag className="w-4 h-4" /> Tags
+                </TabsTrigger>
+              </TabsList>
+            </CardHeader>
+            <CardContent className="pt-6">
+              <TabsContent value="processos" className="mt-0"><ProcessosTab /></TabsContent>
+              <TabsContent value="materiais" className="mt-0"><MateriaisTab /></TabsContent>
+              <TabsContent value="categorias" className="mt-0"><CategoriasTab /></TabsContent>
+              <TabsContent value="colecoes" className="mt-0"><ColecoesTab /></TabsContent>
+              <TabsContent value="tags" className="mt-0"><TagsTab /></TabsContent>
+            </CardContent>
+          </Tabs>
+        </Card>
+      </div>
+    </div>
+  );
+}

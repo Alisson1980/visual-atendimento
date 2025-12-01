@@ -1,0 +1,422 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { 
+  Search, 
+  Plus,
+  Send,
+  MessageCircle,
+  User,
+  Users,
+  Package,
+  Pin,
+  Paperclip,
+  ArrowLeft,
+  ArrowRightLeft,
+  Loader2,
+  X
+} from "lucide-react";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
+import { cn } from "@/lib/utils";
+
+export default function InternalChatPage() {
+  const queryClient = useQueryClient();
+  const [selectedChat, setSelectedChat] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [showNewChatModal, setShowNewChatModal] = useState(false);
+  const [showMobileChat, setShowMobileChat] = useState(false);
+  const [messageText, setMessageText] = useState('');
+  const [newChatData, setNewChatData] = useState({ participant: '', developmentId: '' });
+  const messagesEndRef = useRef(null);
+
+  // Current user
+  const { data: currentUser } = useQuery({
+    queryKey: ['currentUser'],
+    queryFn: () => base44.auth.me()
+  });
+
+  // Load all users for selection
+  const { data: users = [] } = useQuery({
+    queryKey: ['users'],
+    queryFn: () => base44.entities.User.list('full_name', 100)
+  });
+
+  // Load chats
+  const { data: chats = [], isLoading: loadingChats } = useQuery({
+    queryKey: ['internal-chats', currentUser?.email],
+    queryFn: async () => {
+      const allChats = await base44.entities.InternalChat.list('-last_message_at', 100);
+      return allChats.filter(c => c.participants?.includes(currentUser?.email));
+    },
+    enabled: !!currentUser?.email,
+    refetchInterval: 5000
+  });
+
+  // Load messages
+  const { data: messages = [], isLoading: loadingMessages } = useQuery({
+    queryKey: ['internal-messages', selectedChat?.id],
+    queryFn: () => base44.entities.InternalMessage.filter(
+      { chat_id: selectedChat.id },
+      'created_date',
+      200
+    ),
+    enabled: !!selectedChat?.id,
+    refetchInterval: 3000
+  });
+
+  // Load developments for linking
+  const { data: developments = [] } = useQuery({
+    queryKey: ['developments-for-chat'],
+    queryFn: () => base44.entities.DevelopmentRequest.list('-created_date', 50)
+  });
+
+  // Create chat
+  const createChat = useMutation({
+    mutationFn: async (data) => {
+      const otherUser = users.find(u => u.email === data.participant);
+      const development = data.developmentId ? developments.find(d => d.id === data.developmentId) : null;
+      
+      return base44.entities.InternalChat.create({
+        participants: [currentUser.email, data.participant],
+        participant_names: [currentUser.full_name, otherUser?.full_name || data.participant],
+        chat_type: development ? 'development' : 'direct',
+        reference_id: development?.id,
+        reference_title: development ? `${development.request_number} - ${development.product_name}` : null,
+        unread_by: [data.participant]
+      });
+    },
+    onSuccess: (chat) => {
+      queryClient.invalidateQueries(['internal-chats']);
+      setSelectedChat(chat);
+      setShowNewChatModal(false);
+      setShowMobileChat(true);
+      setNewChatData({ participant: '', developmentId: '' });
+    }
+  });
+
+  // Send message
+  const sendMessage = useMutation({
+    mutationFn: async (content) => {
+      const message = await base44.entities.InternalMessage.create({
+        chat_id: selectedChat.id,
+        sender_email: currentUser.email,
+        sender_name: currentUser.full_name,
+        content
+      });
+
+      // Update chat
+      const otherParticipants = selectedChat.participants.filter(p => p !== currentUser.email);
+      await base44.entities.InternalChat.update(selectedChat.id, {
+        last_message: content,
+        last_message_at: new Date().toISOString(),
+        unread_by: otherParticipants
+      });
+
+      return message;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['internal-messages', selectedChat?.id]);
+      queryClient.invalidateQueries(['internal-chats']);
+      setMessageText('');
+    }
+  });
+
+  // Scroll to bottom
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  // Mark as read when selecting chat
+  useEffect(() => {
+    if (selectedChat && selectedChat.unread_by?.includes(currentUser?.email)) {
+      const newUnreadBy = selectedChat.unread_by.filter(e => e !== currentUser.email);
+      base44.entities.InternalChat.update(selectedChat.id, { unread_by: newUnreadBy });
+    }
+  }, [selectedChat, currentUser]);
+
+  const handleSend = () => {
+    if (!messageText.trim()) return;
+    sendMessage.mutate(messageText);
+  };
+
+  const getOtherParticipant = (chat) => {
+    if (!chat.participants || !currentUser) return 'Desconhecido';
+    const idx = chat.participants.findIndex(p => p !== currentUser.email);
+    return chat.participant_names?.[idx] || chat.participants[idx] || 'Desconhecido';
+  };
+
+  const filteredChats = chats.filter(chat => {
+    if (!searchTerm) return true;
+    const other = getOtherParticipant(chat);
+    return other.toLowerCase().includes(searchTerm.toLowerCase()) ||
+           chat.reference_title?.toLowerCase().includes(searchTerm.toLowerCase());
+  });
+
+  const otherUsers = users.filter(u => u.email !== currentUser?.email);
+
+  return (
+    <div className="h-screen bg-slate-50 flex">
+      {/* Chat List */}
+      <div className={cn(
+        "w-full md:w-80 bg-white border-r border-slate-200 flex flex-col",
+        showMobileChat && "hidden md:flex"
+      )}>
+        <div className="p-4 border-b border-slate-100">
+          <div className="flex items-center justify-between mb-4">
+            <h1 className="text-xl font-bold text-slate-900">Chat Interno</h1>
+            <Button size="sm" onClick={() => setShowNewChatModal(true)} className="bg-slate-800 hover:bg-slate-700">
+              <Plus className="w-4 h-4" />
+            </Button>
+          </div>
+          
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <Input
+              placeholder="Buscar conversa..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+        </div>
+
+        <ScrollArea className="flex-1">
+          {loadingChats ? (
+            <div className="p-4 space-y-3">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="animate-pulse h-16 bg-slate-100 rounded-lg" />
+              ))}
+            </div>
+          ) : filteredChats.length === 0 ? (
+            <div className="p-8 text-center text-slate-400">
+              <MessageCircle className="w-12 h-12 mx-auto mb-2 opacity-50" />
+              <p>Nenhuma conversa</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {filteredChats.map(chat => {
+                const isUnread = chat.unread_by?.includes(currentUser?.email);
+                return (
+                  <div
+                    key={chat.id}
+                    className={cn(
+                      "p-3 cursor-pointer hover:bg-slate-50 transition-colors",
+                      selectedChat?.id === chat.id && "bg-slate-100",
+                      isUnread && "bg-blue-50"
+                    )}
+                    onClick={() => {
+                      setSelectedChat(chat);
+                      setShowMobileChat(true);
+                    }}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center flex-shrink-0">
+                        {chat.chat_type === 'development' ? (
+                          <Package className="w-5 h-5 text-slate-500" />
+                        ) : (
+                          <User className="w-5 h-5 text-slate-500" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <span className={cn("font-medium text-slate-900 truncate", isUnread && "font-bold")}>
+                            {getOtherParticipant(chat)}
+                          </span>
+                          {chat.last_message_at && (
+                            <span className="text-xs text-slate-400">
+                              {format(new Date(chat.last_message_at), 'HH:mm')}
+                            </span>
+                          )}
+                        </div>
+                        {chat.reference_title && (
+                          <p className="text-xs text-violet-600 truncate">{chat.reference_title}</p>
+                        )}
+                        <p className={cn("text-sm text-slate-500 truncate", isUnread && "font-medium text-slate-700")}>
+                          {chat.last_message || 'Nova conversa'}
+                        </p>
+                      </div>
+                      {isUnread && (
+                        <div className="w-2 h-2 rounded-full bg-blue-500" />
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </ScrollArea>
+      </div>
+
+      {/* Chat Area */}
+      <div className={cn(
+        "flex-1 flex flex-col bg-white",
+        !showMobileChat && "hidden md:flex"
+      )}>
+        {selectedChat ? (
+          <>
+            {/* Header */}
+            <div className="border-b border-slate-200 p-4">
+              <div className="flex items-center gap-3">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="md:hidden"
+                  onClick={() => setShowMobileChat(false)}
+                >
+                  <ArrowLeft className="w-5 h-5" />
+                </Button>
+                <div className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center">
+                  {selectedChat.chat_type === 'development' ? (
+                    <Package className="w-5 h-5 text-slate-500" />
+                  ) : (
+                    <User className="w-5 h-5 text-slate-500" />
+                  )}
+                </div>
+                <div className="flex-1">
+                  <h2 className="font-semibold text-slate-900">{getOtherParticipant(selectedChat)}</h2>
+                  {selectedChat.reference_title && (
+                    <p className="text-sm text-violet-600">{selectedChat.reference_title}</p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Messages */}
+            <ScrollArea className="flex-1 p-4">
+              {loadingMessages ? (
+                <div className="flex items-center justify-center h-full">
+                  <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+                </div>
+              ) : messages.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-slate-400">
+                  <MessageCircle className="w-12 h-12 mb-2 opacity-50" />
+                  <p>Nenhuma mensagem</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {messages.map(msg => {
+                    const isMe = msg.sender_email === currentUser?.email;
+                    return (
+                      <div key={msg.id} className={cn("flex", isMe ? "justify-end" : "justify-start")}>
+                        <div className={cn(
+                          "max-w-[70%] rounded-2xl px-4 py-2",
+                          isMe ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-900"
+                        )}>
+                          {!isMe && (
+                            <p className="text-xs font-medium text-slate-500 mb-1">{msg.sender_name}</p>
+                          )}
+                          <p className="whitespace-pre-wrap">{msg.content}</p>
+                          <p className={cn("text-xs mt-1", isMe ? "text-slate-400" : "text-slate-400")}>
+                            {format(new Date(msg.created_date), 'HH:mm')}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div ref={messagesEndRef} />
+                </div>
+              )}
+            </ScrollArea>
+
+            {/* Input */}
+            <div className="border-t border-slate-200 p-4">
+              <div className="flex gap-2">
+                <Input
+                  value={messageText}
+                  onChange={(e) => setMessageText(e.target.value)}
+                  placeholder="Digite sua mensagem..."
+                  onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
+                />
+                <Button onClick={handleSend} disabled={sendMessage.isPending || !messageText.trim()}>
+                  <Send className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
+            <MessageCircle className="w-16 h-16 mb-4 opacity-50" />
+            <p className="text-lg">Selecione uma conversa</p>
+          </div>
+        )}
+      </div>
+
+      {/* New Chat Modal */}
+      <Dialog open={showNewChatModal} onOpenChange={setShowNewChatModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Nova Conversa</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Conversar com</Label>
+              <Select value={newChatData.participant} onValueChange={(v) => setNewChatData({ ...newChatData, participant: v })}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione um usuário" />
+                </SelectTrigger>
+                <SelectContent>
+                  {otherUsers.map(user => (
+                    <SelectItem key={user.id} value={user.email}>
+                      {user.full_name} ({user.email})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Vincular a desenvolvimento (opcional)</Label>
+              <Select value={newChatData.developmentId} onValueChange={(v) => setNewChatData({ ...newChatData, developmentId: v })}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Nenhum" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={null}>Nenhum</SelectItem>
+                  {developments.map(dev => (
+                    <SelectItem key={dev.id} value={dev.id}>
+                      {dev.request_number} - {dev.product_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex gap-3 pt-4">
+              <Button variant="outline" className="flex-1" onClick={() => setShowNewChatModal(false)}>
+                Cancelar
+              </Button>
+              <Button 
+                className="flex-1" 
+                onClick={() => createChat.mutate(newChatData)}
+                disabled={!newChatData.participant || createChat.isPending}
+              >
+                Iniciar Conversa
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

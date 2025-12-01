@@ -1,0 +1,71 @@
+{
+  "name": "Material",
+  "type": "object",
+  "properties": {
+    "code": {
+      "type": "string",
+      "description": "C\u00f3digo da mat\u00e9ria prima (ex: SI2050)"
+    },
+    "name": {
+      "type": "string",
+      "description": "Nome interno/real do material"
+    },
+    "display_name": {
+      "type": "string",
+      "description": "Nome para exibi\u00e7\u00e3o ao cliente (ex: Couro Sint\u00e9tico)"
+    },
+    "description": {
+      "type": "string",
+      "description": "Descri\u00e7\u00e3o"
+    },
+    "unit": {
+      "type": "string",
+      "enum": [
+        "metro",
+        "kg",
+        "unidade",
+        "rolo",
+        "folha"
+      ],
+      "default": "metro",
+      "description": "Unidade de medida"
+    },
+    "base_cost": {
+      "type": "number",
+      "description": "Custo base por unidade"
+    },
+    "color_variants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "color_name": {
+            "type": "string",
+            "description": "Nome da cor (ex: Marrom, Preto)"
+          },
+          "color_code": {
+            "type": "string",
+            "description": "C\u00f3digo da cor (ex: #8B4513)"
+          },
+          "is_available": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "description": "Variantes de cor dispon\u00edveis"
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true
+    },
+    "order": {
+      "type": "number",
+      "default": 0
+    }
+  },
+  "required": [
+    "code",
+    "name"
+  ]
+}

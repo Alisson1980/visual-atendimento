@@ -1,0 +1,216 @@
+{
+  "name": "Conversation",
+  "type": "object",
+  "properties": {
+    "customer_id": {
+      "type": "string",
+      "description": "ID do cliente"
+    },
+    "customer_name": {
+      "type": "string",
+      "description": "Nome do cliente (cache)"
+    },
+    "customer_phone": {
+      "type": "string",
+      "description": "Telefone do cliente (cache)"
+    },
+    "customer_email": {
+      "type": "string",
+      "description": "Email do cliente"
+    },
+    "customer_instagram": {
+      "type": "string",
+      "description": "Username do Instagram"
+    },
+    "customer_telegram": {
+      "type": "string",
+      "description": "Username/ID do Telegram"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "waiting",
+        "ai_handling",
+        "human_handling",
+        "pending_transfer",
+        "resolved",
+        "archived"
+      ],
+      "default": "ai_handling",
+      "description": "Status da conversa"
+    },
+    "priority": {
+      "type": "string",
+      "enum": [
+        "low",
+        "normal",
+        "high",
+        "urgent"
+      ],
+      "default": "normal",
+      "description": "Prioridade"
+    },
+    "assigned_to": {
+      "type": "string",
+      "description": "Email do atendente respons\u00e1vel"
+    },
+    "assigned_to_name": {
+      "type": "string",
+      "description": "Nome do atendente"
+    },
+    "assigned_department": {
+      "type": "string",
+      "enum": [
+        "sales",
+        "support",
+        "design",
+        "production",
+        "finance",
+        "management"
+      ],
+      "description": "Departamento respons\u00e1vel"
+    },
+    "channel": {
+      "type": "string",
+      "enum": [
+        "whatsapp",
+        "email",
+        "instagram",
+        "telegram",
+        "webchat"
+      ],
+      "default": "whatsapp",
+      "description": "Canal de comunica\u00e7\u00e3o"
+    },
+    "classification": {
+      "type": "string",
+      "enum": [
+        "order",
+        "support",
+        "quote",
+        "info",
+        "complaint",
+        "development",
+        "payment",
+        "other"
+      ],
+      "description": "Classifica\u00e7\u00e3o da conversa (IA)"
+    },
+    "ai_confidence": {
+      "type": "number",
+      "description": "Confian\u00e7a da IA na classifica\u00e7\u00e3o (0-100)"
+    },
+    "ai_summary": {
+      "type": "string",
+      "description": "Resumo gerado pela IA"
+    },
+    "ai_suggested_action": {
+      "type": "string",
+      "description": "A\u00e7\u00e3o sugerida pela IA"
+    },
+    "ai_escalation_reason": {
+      "type": "string",
+      "description": "Motivo do escalonamento para humano"
+    },
+    "transfer_history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "from_user": {
+            "type": "string"
+          },
+          "to_user": {
+            "type": "string"
+          },
+          "from_department": {
+            "type": "string"
+          },
+          "to_department": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "transferred_at": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "Hist\u00f3rico de transfer\u00eancias"
+    },
+    "first_response_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Data da primeira resposta humana"
+    },
+    "resolved_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Data de resolu\u00e7\u00e3o"
+    },
+    "satisfaction_rating": {
+      "type": "number",
+      "description": "Avalia\u00e7\u00e3o do cliente (1-5)"
+    },
+    "satisfaction_feedback": {
+      "type": "string",
+      "description": "Feedback do cliente"
+    },
+    "last_message": {
+      "type": "string",
+      "description": "\u00daltima mensagem (preview)"
+    },
+    "last_message_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Data da \u00faltima mensagem"
+    },
+    "last_message_sender": {
+      "type": "string",
+      "enum": [
+        "customer",
+        "agent",
+        "ai",
+        "system"
+      ],
+      "description": "Quem enviou a \u00faltima mensagem"
+    },
+    "unread_count": {
+      "type": "number",
+      "default": 0,
+      "description": "Mensagens n\u00e3o lidas"
+    },
+    "message_count": {
+      "type": "number",
+      "default": 0,
+      "description": "Total de mensagens"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Tags da conversa"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Notas internas"
+    },
+    "subject": {
+      "type": "string",
+      "description": "Assunto (para emails)"
+    },
+    "related_order_id": {
+      "type": "string",
+      "description": "ID do pedido relacionado"
+    },
+    "related_development_id": {
+      "type": "string",
+      "description": "ID do desenvolvimento relacionado"
+    }
+  },
+  "required": [
+    "customer_name"
+  ]
+}

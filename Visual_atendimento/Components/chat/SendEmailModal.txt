@@ -1,0 +1,215 @@
+import React, { useState } from 'react';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Mail, Send, FileText, Loader2 } from "lucide-react";
+import { toast } from "sonner";
+
+export default function SendEmailModal({ 
+  open, 
+  onOpenChange, 
+  customer,
+  conversation,
+  onSuccess 
+}) {
+  const [formData, setFormData] = useState({
+    to: customer?.email || '',
+    subject: '',
+    body: '',
+    templateId: ''
+  });
+  const [isSending, setIsSending] = useState(false);
+
+  // Carregar templates
+  const { data: templates = [] } = useQuery({
+    queryKey: ['email-templates'],
+    queryFn: () => base44.entities.EmailTemplate.filter({ is_active: true }, 'name', 50),
+  });
+
+  // Aplicar template
+  const handleTemplateSelect = (templateId) => {
+    if (!templateId) {
+      setFormData({ ...formData, templateId: '', subject: '', body: '' });
+      return;
+    }
+
+    const template = templates.find(t => t.id === templateId);
+    if (template) {
+      let subject = template.subject;
+      let body = template.body;
+
+      // Substituir variáveis
+      const replacements = {
+        '{{nome}}': customer?.name || '',
+        '{{email}}': customer?.email || '',
+        '{{telefone}}': customer?.phone || '',
+        '{{empresa}}': 'Visual Etiquetas'
+      };
+
+      Object.entries(replacements).forEach(([key, value]) => {
+        subject = subject.replace(new RegExp(key, 'g'), value);
+        body = body.replace(new RegExp(key, 'g'), value);
+      });
+
+      setFormData({
+        ...formData,
+        templateId,
+        subject,
+        body
+      });
+    }
+  };
+
+  // Enviar email
+  const handleSend = async () => {
+    if (!formData.to || !formData.subject || !formData.body) {
+      toast.error('Preencha todos os campos');
+      return;
+    }
+
+    setIsSending(true);
+    try {
+      await base44.integrations.Core.SendEmail({
+        to: formData.to,
+        subject: formData.subject,
+        body: formData.body,
+        from_name: 'Visual Etiquetas'
+      });
+
+      // Se tiver conversa, registrar mensagem
+      if (conversation) {
+        await base44.entities.Message.create({
+          conversation_id: conversation.id,
+          content: `📧 Email enviado\n\nAssunto: ${formData.subject}\n\n${formData.body}`,
+          sender_type: 'agent',
+          message_type: 'text',
+          status: 'sent',
+          metadata: {
+            email_to: formData.to,
+            email_subject: formData.subject
+          }
+        });
+      }
+
+      toast.success('Email enviado com sucesso!');
+      onSuccess?.();
+      onOpenChange(false);
+      setFormData({ to: customer?.email || '', subject: '', body: '', templateId: '' });
+    } catch (error) {
+      toast.error('Erro ao enviar email');
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Mail className="w-5 h-5 text-blue-600" />
+            Enviar Email
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          {/* Template selector */}
+          {templates.length > 0 && (
+            <div className="space-y-2">
+              <Label>Usar template</Label>
+              <Select value={formData.templateId} onValueChange={handleTemplateSelect}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione um template (opcional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={null}>Sem template</SelectItem>
+                  {templates.map(template => (
+                    <SelectItem key={template.id} value={template.id}>
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-4 h-4" />
+                        {template.name}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {/* Destinatário */}
+          <div className="space-y-2">
+            <Label>Para *</Label>
+            <Input
+              type="email"
+              value={formData.to}
+              onChange={(e) => setFormData({ ...formData, to: e.target.value })}
+              placeholder="email@exemplo.com"
+            />
+          </div>
+
+          {/* Assunto */}
+          <div className="space-y-2">
+            <Label>Assunto *</Label>
+            <Input
+              value={formData.subject}
+              onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
+              placeholder="Assunto do email"
+            />
+          </div>
+
+          {/* Corpo */}
+          <div className="space-y-2">
+            <Label>Mensagem *</Label>
+            <Textarea
+              value={formData.body}
+              onChange={(e) => setFormData({ ...formData, body: e.target.value })}
+              placeholder="Escreva sua mensagem..."
+              rows={8}
+              className="font-mono text-sm"
+            />
+          </div>
+
+          <p className="text-xs text-slate-500">
+            Variáveis disponíveis: {"{{nome}}"}, {"{{email}}"}, {"{{telefone}}"}, {"{{empresa}}"}
+          </p>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancelar
+          </Button>
+          <Button onClick={handleSend} disabled={isSending}>
+            {isSending ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Enviando...
+              </>
+            ) : (
+              <>
+                <Send className="w-4 h-4 mr-2" />
+                Enviar Email
+              </>
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

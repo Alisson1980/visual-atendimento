@@ -1,0 +1,276 @@
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
+import { 
+  MessageCircle, 
+  Mail, 
+  Phone, 
+  User,
+  Send,
+  Loader2,
+  Search
+} from "lucide-react";
+import { ChannelIcon, channelConfig, WhatsAppIcon, InstagramIcon, TelegramIcon } from './ChannelBadge';
+import { toast } from "sonner";
+
+export default function NewConversationModal({ open, onOpenChange, onSuccess }) {
+  const queryClient = useQueryClient();
+  const [channel, setChannel] = useState('whatsapp');
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [formData, setFormData] = useState({
+    customer_name: '',
+    customer_phone: '',
+    customer_email: '',
+    customer_instagram: '',
+    customer_telegram: '',
+    initial_message: ''
+  });
+
+  // Carregar clientes
+  const { data: customers = [] } = useQuery({
+    queryKey: ['customers-search', searchTerm],
+    queryFn: () => base44.entities.Customer.list('-created_date', 100),
+  });
+
+  const filteredCustomers = customers.filter(c => 
+    !searchTerm || 
+    c.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    c.phone?.includes(searchTerm) ||
+    c.email?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  // Criar conversa
+  const createConversationMutation = useMutation({
+    mutationFn: async () => {
+      const convData = {
+        customer_name: formData.customer_name,
+        customer_phone: formData.customer_phone || null,
+        customer_email: formData.customer_email || null,
+        customer_instagram: formData.customer_instagram || null,
+        customer_telegram: formData.customer_telegram || null,
+        channel,
+        status: 'human_handling',
+        priority: 'normal',
+        last_message: formData.initial_message,
+        last_message_at: new Date().toISOString(),
+        unread_count: 0
+      };
+
+      const conversation = await base44.entities.Conversation.create(convData);
+
+      // Criar mensagem inicial se houver
+      if (formData.initial_message) {
+        await base44.entities.Message.create({
+          conversation_id: conversation.id,
+          content: formData.initial_message,
+          sender_type: 'agent',
+          message_type: 'text',
+          status: 'sent'
+        });
+      }
+
+      return conversation;
+    },
+    onSuccess: (conv) => {
+      queryClient.invalidateQueries(['conversations']);
+      toast.success('Conversa iniciada!');
+      onSuccess?.(conv);
+      onOpenChange(false);
+      resetForm();
+    }
+  });
+
+  const resetForm = () => {
+    setSelectedCustomer(null);
+    setSearchTerm('');
+    setFormData({
+      customer_name: '',
+      customer_phone: '',
+      customer_email: '',
+      customer_instagram: '',
+      customer_telegram: ''
+    });
+  };
+
+  const handleSelectCustomer = (customer) => {
+    setSelectedCustomer(customer);
+    setFormData({
+      ...formData,
+      customer_name: customer.name || '',
+      customer_phone: customer.phone || '',
+      customer_email: customer.email || ''
+    });
+  };
+
+  const getChannelField = () => {
+    switch (channel) {
+      case 'whatsapp':
+        return { field: 'customer_phone', label: 'WhatsApp', placeholder: '+55 11 99999-9999' };
+      case 'email':
+        return { field: 'customer_email', label: 'Email', placeholder: 'email@exemplo.com' };
+      case 'instagram':
+        return { field: 'customer_instagram', label: 'Instagram', placeholder: '@usuario' };
+      case 'telegram':
+        return { field: 'customer_telegram', label: 'Telegram', placeholder: '@usuario ou ID' };
+      default:
+        return { field: 'customer_phone', label: 'Contato', placeholder: '' };
+    }
+  };
+
+  const channelField = getChannelField();
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <MessageCircle className="w-5 h-5" />
+            Nova Conversa
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          {/* Seleção de canal */}
+          <div className="space-y-2">
+            <Label>Canal</Label>
+            <div className="grid grid-cols-4 gap-2">
+              {['whatsapp', 'email', 'instagram', 'telegram'].map(ch => {
+                const config = channelConfig[ch];
+                const Icon = config.icon;
+                return (
+                  <button
+                    key={ch}
+                    type="button"
+                    onClick={() => setChannel(ch)}
+                    className={cn(
+                      "flex flex-col items-center gap-1 p-3 rounded-xl border-2 transition-all",
+                      channel === ch 
+                        ? "border-slate-900 bg-slate-50" 
+                        : "border-slate-200 hover:border-slate-300"
+                    )}
+                  >
+                    <Icon className={cn("w-5 h-5", config.iconColor)} />
+                    <span className="text-xs font-medium">{config.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Buscar cliente existente */}
+          <div className="space-y-2">
+            <Label>Buscar cliente existente</Label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <Input
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Nome, telefone ou email..."
+                className="pl-9"
+              />
+            </div>
+            {searchTerm && filteredCustomers.length > 0 && (
+              <div className="max-h-32 overflow-y-auto border rounded-lg divide-y">
+                {filteredCustomers.slice(0, 5).map(customer => (
+                  <button
+                    key={customer.id}
+                    type="button"
+                    onClick={() => handleSelectCustomer(customer)}
+                    className={cn(
+                      "w-full flex items-center gap-3 p-2 hover:bg-slate-50 text-left",
+                      selectedCustomer?.id === customer.id && "bg-slate-100"
+                    )}
+                  >
+                    <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center">
+                      <span className="text-sm font-medium">{customer.name?.charAt(0)}</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{customer.name}</p>
+                      <p className="text-xs text-slate-500 truncate">
+                        {customer.phone} {customer.email && `• ${customer.email}`}
+                      </p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Dados do cliente */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Nome *</Label>
+              <Input
+                value={formData.customer_name}
+                onChange={(e) => setFormData({ ...formData, customer_name: e.target.value })}
+                placeholder="Nome do cliente"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>{channelField.label} *</Label>
+              <Input
+                value={formData[channelField.field]}
+                onChange={(e) => setFormData({ ...formData, [channelField.field]: e.target.value })}
+                placeholder={channelField.placeholder}
+              />
+            </div>
+          </div>
+
+          {/* Mensagem inicial */}
+          <div className="space-y-2">
+            <Label>Mensagem inicial (opcional)</Label>
+            <Textarea
+              value={formData.initial_message}
+              onChange={(e) => setFormData({ ...formData, initial_message: e.target.value })}
+              placeholder="Digite a primeira mensagem..."
+              rows={3}
+            />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancelar
+          </Button>
+          <Button 
+            onClick={() => createConversationMutation.mutate()}
+            disabled={!formData.customer_name || createConversationMutation.isPending}
+          >
+            {createConversationMutation.isPending ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Criando...
+              </>
+            ) : (
+              <>
+                <Send className="w-4 h-4 mr-2" />
+                Iniciar Conversa
+              </>
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

@@ -1,0 +1,85 @@
+{
+  "name": "Notification",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": [
+        "low_stock",
+        "pending_order",
+        "waiting_conversation",
+        "qualified_lead",
+        "system",
+        "development_update",
+        "approval_pending"
+      ],
+      "description": "Tipo da notifica\u00e7\u00e3o"
+    },
+    "title": {
+      "type": "string",
+      "description": "T\u00edtulo da notifica\u00e7\u00e3o"
+    },
+    "message": {
+      "type": "string",
+      "description": "Mensagem detalhada"
+    },
+    "priority": {
+      "type": "string",
+      "enum": [
+        "low",
+        "normal",
+        "high",
+        "urgent"
+      ],
+      "default": "normal",
+      "description": "Prioridade"
+    },
+    "reference_id": {
+      "type": "string",
+      "description": "ID do registro relacionado (produto, pedido, conversa, desenvolvimento)"
+    },
+    "reference_type": {
+      "type": "string",
+      "enum": [
+        "product",
+        "order",
+        "conversation",
+        "customer",
+        "development"
+      ],
+      "description": "Tipo do registro relacionado"
+    },
+    "is_read": {
+      "type": "boolean",
+      "default": false,
+      "description": "Se foi lida"
+    },
+    "for_user": {
+      "type": "string",
+      "description": "Email do usu\u00e1rio destinat\u00e1rio (null = todos)"
+    },
+    "for_role": {
+      "type": "string",
+      "enum": [
+        "admin",
+        "user",
+        "all"
+      ],
+      "default": "all",
+      "description": "Role que pode ver a notifica\u00e7\u00e3o"
+    },
+    "action_url": {
+      "type": "string",
+      "description": "URL de a\u00e7\u00e3o (p\u00e1gina para redirecionar)"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Dados adicionais"
+    }
+  },
+  "required": [
+    "type",
+    "title",
+    "message"
+  ]
+}

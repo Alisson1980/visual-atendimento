@@ -1,0 +1,74 @@
+{
+  "name": "ProductCustomization",
+  "type": "object",
+  "properties": {
+    "product_id": {
+      "type": "string",
+      "description": "ID do produto"
+    },
+    "product_name": {
+      "type": "string",
+      "description": "Nome do produto"
+    },
+    "customization_type": {
+      "type": "string",
+      "enum": [
+        "color",
+        "material",
+        "technique",
+        "print_area",
+        "size",
+        "other"
+      ],
+      "description": "Tipo de personaliza\u00e7\u00e3o"
+    },
+    "name": {
+      "type": "string",
+      "description": "Nome da op\u00e7\u00e3o (ex: Cores dispon\u00edveis)"
+    },
+    "options": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "price_adjustment": {
+            "type": "number"
+          },
+          "image_url": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "Op\u00e7\u00f5es dispon\u00edveis"
+    },
+    "is_required": {
+      "type": "boolean",
+      "default": false,
+      "description": "Se a personaliza\u00e7\u00e3o \u00e9 obrigat\u00f3ria"
+    },
+    "min_quantity": {
+      "type": "number",
+      "description": "Quantidade m\u00ednima para este produto"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Observa\u00e7\u00f5es da personaliza\u00e7\u00e3o"
+    },
+    "order": {
+      "type": "number",
+      "default": 0,
+      "description": "Ordem de exibi\u00e7\u00e3o"
+    }
+  },
+  "required": [
+    "product_id",
+    "customization_type",
+    "name"
+  ]
+}

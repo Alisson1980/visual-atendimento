@@ -1,0 +1,415 @@
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { 
+  Plus,
+  Calculator,
+  Edit,
+  Trash2,
+  DollarSign,
+  Percent,
+  Layers
+} from "lucide-react";
+
+const ruleTypeConfig = {
+  technique: { label: 'Técnica', icon: Layers, color: 'bg-blue-100 text-blue-700' },
+  material: { label: 'Material', icon: Layers, color: 'bg-amber-100 text-amber-700' },
+  quantity: { label: 'Quantidade', icon: Calculator, color: 'bg-green-100 text-green-700' },
+  complexity: { label: 'Complexidade', icon: Calculator, color: 'bg-violet-100 text-violet-700' },
+  custom: { label: 'Personalizado', icon: DollarSign, color: 'bg-slate-100 text-slate-700' }
+};
+
+const adjustmentTypeLabels = {
+  fixed: 'Valor Fixo (R$)',
+  percentage: 'Percentual (%)',
+  per_unit: 'Por Unidade (R$)'
+};
+
+export default function PricingRules() {
+  const queryClient = useQueryClient();
+  const [showModal, setShowModal] = useState(false);
+  const [editingRule, setEditingRule] = useState(null);
+  const [formData, setFormData] = useState({
+    name: '',
+    rule_type: 'technique',
+    condition_field: '',
+    condition_value: '',
+    adjustment_type: 'fixed',
+    adjustment_value: '',
+    min_quantity: '',
+    max_quantity: '',
+    is_active: true,
+    priority: 0,
+    description: ''
+  });
+
+  // Load rules
+  const { data: rules = [], isLoading } = useQuery({
+    queryKey: ['pricing-rules'],
+    queryFn: () => base44.entities.PricingRule.list('priority', 100)
+  });
+
+  // Save rule
+  const saveMutation = useMutation({
+    mutationFn: async (data) => {
+      const payload = {
+        ...data,
+        adjustment_value: parseFloat(data.adjustment_value) || 0,
+        min_quantity: data.min_quantity ? parseInt(data.min_quantity) : null,
+        max_quantity: data.max_quantity ? parseInt(data.max_quantity) : null,
+        priority: parseInt(data.priority) || 0
+      };
+      
+      if (editingRule) {
+        return base44.entities.PricingRule.update(editingRule.id, payload);
+      }
+      return base44.entities.PricingRule.create(payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['pricing-rules']);
+      handleCloseModal();
+    }
+  });
+
+  // Delete rule
+  const deleteMutation = useMutation({
+    mutationFn: (id) => base44.entities.PricingRule.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['pricing-rules']);
+    }
+  });
+
+  // Toggle active
+  const toggleActive = useMutation({
+    mutationFn: ({ id, is_active }) => base44.entities.PricingRule.update(id, { is_active }),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['pricing-rules']);
+    }
+  });
+
+  const handleOpenModal = (rule = null) => {
+    if (rule) {
+      setEditingRule(rule);
+      setFormData({
+        name: rule.name || '',
+        rule_type: rule.rule_type || 'technique',
+        condition_field: rule.condition_field || '',
+        condition_value: rule.condition_value || '',
+        adjustment_type: rule.adjustment_type || 'fixed',
+        adjustment_value: rule.adjustment_value?.toString() || '',
+        min_quantity: rule.min_quantity?.toString() || '',
+        max_quantity: rule.max_quantity?.toString() || '',
+        is_active: rule.is_active !== false,
+        priority: rule.priority || 0,
+        description: rule.description || ''
+      });
+    } else {
+      setEditingRule(null);
+      setFormData({
+        name: '',
+        rule_type: 'technique',
+        condition_field: '',
+        condition_value: '',
+        adjustment_type: 'fixed',
+        adjustment_value: '',
+        min_quantity: '',
+        max_quantity: '',
+        is_active: true,
+        priority: 0,
+        description: ''
+      });
+    }
+    setShowModal(true);
+  };
+
+  const handleCloseModal = () => {
+    setShowModal(false);
+    setEditingRule(null);
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    saveMutation.mutate(formData);
+  };
+
+  const formatAdjustment = (rule) => {
+    if (rule.adjustment_type === 'percentage') {
+      return `${rule.adjustment_value > 0 ? '+' : ''}${rule.adjustment_value}%`;
+    }
+    return `${rule.adjustment_value > 0 ? '+' : ''}R$ ${rule.adjustment_value?.toFixed(2)}`;
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 p-6">
+      <div className="max-w-5xl mx-auto space-y-6">
+        {/* Header */}
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Regras de Preço</h1>
+            <p className="text-slate-500">Configure ajustes automáticos de preço</p>
+          </div>
+          <Button onClick={() => handleOpenModal()} className="bg-slate-800 hover:bg-slate-700">
+            <Plus className="w-4 h-4 mr-2" />
+            Nova Regra
+          </Button>
+        </div>
+
+        {/* Info */}
+        <Card className="border-blue-200 bg-blue-50">
+          <CardContent className="p-4">
+            <div className="flex items-start gap-3">
+              <Calculator className="w-5 h-5 text-blue-600 mt-0.5" />
+              <div>
+                <p className="font-medium text-blue-900">Como funciona</p>
+                <p className="text-sm text-blue-700">
+                  As regras são aplicadas automaticamente ao calcular o preço de um desenvolvimento.
+                  Configure condições como técnica, material ou quantidade para ajustar o valor.
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Rules List */}
+        <Card className="border-0 shadow-sm">
+          {isLoading ? (
+            <CardContent className="p-6">
+              <div className="animate-pulse space-y-4">
+                {[1, 2, 3].map(i => (
+                  <div key={i} className="h-16 bg-slate-100 rounded-lg" />
+                ))}
+              </div>
+            </CardContent>
+          ) : rules.length === 0 ? (
+            <CardContent className="p-12 text-center">
+              <Calculator className="w-12 h-12 mx-auto text-slate-300 mb-4" />
+              <p className="text-slate-500">Nenhuma regra configurada</p>
+              <Button variant="outline" className="mt-4" onClick={() => handleOpenModal()}>
+                <Plus className="w-4 h-4 mr-2" />
+                Criar primeira regra
+              </Button>
+            </CardContent>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {rules.map(rule => {
+                const TypeIcon = ruleTypeConfig[rule.rule_type]?.icon || Calculator;
+                return (
+                  <div key={rule.id} className="p-4 hover:bg-slate-50 transition-colors">
+                    <div className="flex items-center gap-4">
+                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${ruleTypeConfig[rule.rule_type]?.color.split(' ')[0]}`}>
+                        <TypeIcon className="w-5 h-5" />
+                      </div>
+                      
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-medium text-slate-900">{rule.name}</span>
+                          <Badge className={ruleTypeConfig[rule.rule_type]?.color}>
+                            {ruleTypeConfig[rule.rule_type]?.label}
+                          </Badge>
+                          {!rule.is_active && (
+                            <Badge variant="outline" className="text-slate-400">Inativa</Badge>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-4 text-sm text-slate-500">
+                          {rule.condition_value && (
+                            <span>Condição: {rule.condition_value}</span>
+                          )}
+                          <span className="font-medium text-slate-700">
+                            {formatAdjustment(rule)}
+                          </span>
+                          {(rule.min_quantity || rule.max_quantity) && (
+                            <span>
+                              Qtd: {rule.min_quantity || 0} - {rule.max_quantity || '∞'}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          checked={rule.is_active}
+                          onCheckedChange={(v) => toggleActive.mutate({ id: rule.id, is_active: v })}
+                        />
+                        <Button variant="ghost" size="icon" onClick={() => handleOpenModal(rule)}>
+                          <Edit className="w-4 h-4" />
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="text-red-600"
+                          onClick={() => deleteMutation.mutate(rule.id)}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Card>
+
+        {/* Modal */}
+        <Dialog open={showModal} onOpenChange={setShowModal}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>{editingRule ? 'Editar Regra' : 'Nova Regra de Preço'}</DialogTitle>
+            </DialogHeader>
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <Label>Nome da Regra *</Label>
+                <Input
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  placeholder="Ex: Adicional Bordado"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Tipo *</Label>
+                  <Select value={formData.rule_type} onValueChange={(v) => setFormData({ ...formData, rule_type: v })}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(ruleTypeConfig).map(([key, config]) => (
+                        <SelectItem key={key} value={key}>{config.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Prioridade</Label>
+                  <Input
+                    type="number"
+                    value={formData.priority}
+                    onChange={(e) => setFormData({ ...formData, priority: e.target.value })}
+                    placeholder="0"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Campo de Condição</Label>
+                  <Input
+                    value={formData.condition_field}
+                    onChange={(e) => setFormData({ ...formData, condition_field: e.target.value })}
+                    placeholder="Ex: technique"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Valor da Condição</Label>
+                  <Input
+                    value={formData.condition_value}
+                    onChange={(e) => setFormData({ ...formData, condition_value: e.target.value })}
+                    placeholder="Ex: bordado"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Tipo de Ajuste *</Label>
+                  <Select value={formData.adjustment_type} onValueChange={(v) => setFormData({ ...formData, adjustment_type: v })}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(adjustmentTypeLabels).map(([key, label]) => (
+                        <SelectItem key={key} value={key}>{label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Valor do Ajuste *</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={formData.adjustment_value}
+                    onChange={(e) => setFormData({ ...formData, adjustment_value: e.target.value })}
+                    placeholder="0.00"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Quantidade Mínima</Label>
+                  <Input
+                    type="number"
+                    value={formData.min_quantity}
+                    onChange={(e) => setFormData({ ...formData, min_quantity: e.target.value })}
+                    placeholder="0"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Quantidade Máxima</Label>
+                  <Input
+                    type="number"
+                    value={formData.max_quantity}
+                    onChange={(e) => setFormData({ ...formData, max_quantity: e.target.value })}
+                    placeholder="Ilimitado"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Descrição</Label>
+                <Textarea
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  placeholder="Descrição da regra..."
+                  rows={2}
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={formData.is_active}
+                  onCheckedChange={(v) => setFormData({ ...formData, is_active: v })}
+                />
+                <Label>Regra ativa</Label>
+              </div>
+
+              <div className="flex gap-3 pt-4 border-t">
+                <Button type="button" variant="outline" className="flex-1" onClick={handleCloseModal}>
+                  Cancelar
+                </Button>
+                <Button type="submit" className="flex-1" disabled={saveMutation.isPending}>
+                  {saveMutation.isPending ? 'Salvando...' : 'Salvar'}
+                </Button>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </div>
+  );
+}

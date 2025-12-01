@@ -1,0 +1,780 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { 
+  Search, 
+  MoreVertical, 
+  Bot, 
+  User, 
+  Phone,
+  Mail,
+  Tag,
+  Archive,
+  CheckCircle,
+  Clock,
+  ArrowLeft,
+  Send,
+  UserPlus,
+  Plus,
+  ArrowRightLeft,
+  PanelRightOpen,
+  PanelRightClose,
+  RefreshCw,
+  MessageCircle,
+  AlertTriangle,
+  Sparkles
+} from "lucide-react";
+import { ChannelBadge } from '@/components/chat/ChannelBadge';
+import SendEmailModal from '@/components/chat/SendEmailModal';
+import NewConversationModal from '@/components/chat/NewConversationModal';
+import TransferModal from '@/components/chat/TransferModal';
+import ConversationStats from '@/components/chat/ConversationStats';
+import ConversationDetails from '@/components/chat/ConversationDetails';
+import QuickResponses from '@/components/chat/QuickResponses';
+import KnowledgeBasePanel from '@/components/chat/KnowledgeBasePanel';
+import TagsManager from '@/components/chat/TagsManager';
+import InternalNotes from '@/components/chat/InternalNotes';
+import FileUploader from '@/components/chat/FileUploader';
+import WhatsAppSimulator from '@/components/whatsapp/WhatsAppSimulator';
+import { cn } from "@/lib/utils";
+import ConversationList from '@/components/chat/ConversationList';
+import MessageBubble from '@/components/chat/MessageBubble';
+import ChatInput from '@/components/chat/ChatInput';
+import { format } from 'date-fns';
+
+const statusLabels = {
+  waiting: 'Aguardando',
+  ai_handling: 'IA',
+  human_handling: 'Atendimento',
+  pending_transfer: 'Transferir',
+  resolved: 'Resolvido',
+  archived: 'Arquivado'
+};
+
+const statusColors = {
+  waiting: 'bg-amber-100 text-amber-700 border-amber-200',
+  ai_handling: 'bg-violet-100 text-violet-700 border-violet-200',
+  human_handling: 'bg-blue-100 text-blue-700 border-blue-200',
+  pending_transfer: 'bg-orange-100 text-orange-700 border-orange-200',
+  resolved: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+  archived: 'bg-slate-100 text-slate-500 border-slate-200'
+};
+
+export default function Conversations() {
+  const queryClient = useQueryClient();
+  const [selectedConversation, setSelectedConversation] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('active');
+  const [showMobileChat, setShowMobileChat] = useState(false);
+  const [showEmailModal, setShowEmailModal] = useState(false);
+  const [showNewConversationModal, setShowNewConversationModal] = useState(false);
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+  const [messageInput, setMessageInput] = useState('');
+  const [showWhatsAppSimulator, setShowWhatsAppSimulator] = useState(false);
+  const messagesEndRef = useRef(null);
+
+  // Load current user
+  const { data: currentUser } = useQuery({
+    queryKey: ['currentUser'],
+    queryFn: () => base44.auth.me()
+  });
+
+  // Load conversations
+  const { data: allConversations = [], isLoading: loadingConversations, refetch } = useQuery({
+    queryKey: ['conversations'],
+    queryFn: () => base44.entities.Conversation.list('-last_message_at', 200),
+    refetchInterval: 5000
+  });
+
+  // Filter conversations by user permissions (admin sees all)
+  const isAdmin = currentUser?.role === 'admin';
+  const userDepartment = currentUser?.department;
+  const conversations = isAdmin 
+    ? allConversations 
+    : allConversations.filter(c => 
+        c.assigned_to === currentUser?.email || 
+        c.assigned_department === userDepartment ||
+        c.status === 'waiting' ||
+        c.status === 'pending_transfer'
+      );
+
+  // Load messages for selected conversation
+  const { data: messages = [], isLoading: loadingMessages } = useQuery({
+    queryKey: ['messages', selectedConversation?.id],
+    queryFn: () => base44.entities.Message.filter(
+      { conversation_id: selectedConversation.id },
+      'created_date',
+      200
+    ),
+    enabled: !!selectedConversation?.id,
+    refetchInterval: 3000
+  });
+
+  // Send message mutation
+  const sendMessageMutation = useMutation({
+    mutationFn: async (content) => {
+      const isFirstHumanResponse = !selectedConversation.first_response_at && 
+        selectedConversation.status !== 'human_handling';
+
+      const message = await base44.entities.Message.create({
+        conversation_id: selectedConversation.id,
+        content,
+        sender_type: 'agent',
+        sender_id: currentUser?.id,
+        sender_name: currentUser?.full_name,
+        message_type: 'text',
+        status: 'sent'
+      });
+
+      // Update conversation
+      const updateData = {
+        last_message: content,
+        last_message_at: new Date().toISOString(),
+        last_message_sender: 'agent',
+        status: 'human_handling',
+        assigned_to: currentUser?.email,
+        assigned_to_name: currentUser?.full_name,
+        assigned_department: currentUser?.department,
+        message_count: (selectedConversation.message_count || 0) + 1
+      };
+
+      if (isFirstHumanResponse) {
+        updateData.first_response_at = new Date().toISOString();
+      }
+
+      await base44.entities.Conversation.update(selectedConversation.id, updateData);
+
+      return message;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['messages', selectedConversation?.id]);
+      queryClient.invalidateQueries(['conversations']);
+      setMessageInput('');
+    }
+  });
+
+  // Update conversation mutation
+  const updateConversationMutation = useMutation({
+    mutationFn: ({ id, data }) => base44.entities.Conversation.update(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['conversations']);
+    }
+  });
+
+  // AI Analysis mutation
+  const analyzeWithAI = useMutation({
+    mutationFn: async () => {
+      const conversationMessages = messages.map(m => 
+        `${m.sender_type === 'customer' ? 'Cliente' : 'Atendente'}: ${m.content}`
+      ).join('\n');
+
+      const result = await base44.integrations.Core.InvokeLLM({
+        prompt: `Analise esta conversa de atendimento ao cliente e forneça:
+1. Um resumo breve (máximo 2 frases)
+2. A classificação do assunto (order, support, quote, info, complaint, development, payment, other)
+3. Uma sugestão de ação para o atendente
+4. A prioridade sugerida (low, normal, high, urgent)
+5. Nível de confiança (0-100)
+
+Conversa:
+${conversationMessages}`,
+        response_json_schema: {
+          type: "object",
+          properties: {
+            summary: { type: "string" },
+            classification: { type: "string" },
+            suggested_action: { type: "string" },
+            priority: { type: "string" },
+            confidence: { type: "number" }
+          }
+        }
+      });
+
+      await base44.entities.Conversation.update(selectedConversation.id, {
+        ai_summary: result.summary,
+        classification: result.classification,
+        ai_suggested_action: result.suggested_action,
+        priority: result.priority,
+        ai_confidence: result.confidence
+      });
+
+      return result;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['conversations']);
+    }
+  });
+
+  // Scroll to last message
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  // Check URL parameter
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const id = urlParams.get('id');
+    if (id && conversations.length > 0) {
+      const conv = conversations.find(c => c.id === id);
+      if (conv) {
+        setSelectedConversation(conv);
+        setShowMobileChat(true);
+      }
+    }
+  }, [conversations]);
+
+  // Filter conversations
+  const filteredConversations = conversations.filter(conv => {
+    const matchesSearch = !searchTerm || 
+      conv.customer_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      conv.customer_phone?.includes(searchTerm) ||
+      conv.customer_email?.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    let matchesStatus = true;
+    if (statusFilter === 'active') {
+      matchesStatus = !['resolved', 'archived'].includes(conv.status);
+    } else if (statusFilter === 'mine') {
+      matchesStatus = conv.assigned_to === currentUser?.email;
+    } else if (statusFilter !== 'all') {
+      matchesStatus = conv.status === statusFilter;
+    }
+
+    return matchesSearch && matchesStatus;
+  });
+
+  // Sort: urgent/high priority first, then by last message
+  const sortedConversations = [...filteredConversations].sort((a, b) => {
+    const priorityOrder = { urgent: 0, high: 1, normal: 2, low: 3 };
+    const aPriority = priorityOrder[a.priority] ?? 2;
+    const bPriority = priorityOrder[b.priority] ?? 2;
+    if (aPriority !== bPriority) return aPriority - bPriority;
+    return new Date(b.last_message_at || b.created_date) - new Date(a.last_message_at || a.created_date);
+  });
+
+  const handleSelectConversation = (conv) => {
+    setSelectedConversation(conv);
+    setShowMobileChat(true);
+    
+    if (conv.unread_count > 0) {
+      updateConversationMutation.mutate({
+        id: conv.id,
+        data: { unread_count: 0 }
+      });
+    }
+  };
+
+  const handleSendMessage = async (content) => {
+    if (!content.trim()) return;
+    sendMessageMutation.mutate(content);
+  };
+
+  const handleQuickResponse = (text) => {
+    setMessageInput(text);
+  };
+
+  const handleFilesUploaded = async (files) => {
+    for (const file of files) {
+      await base44.entities.Message.create({
+        conversation_id: selectedConversation.id,
+        content: file.name,
+        sender_type: 'agent',
+        sender_id: currentUser?.id,
+        sender_name: currentUser?.full_name,
+        message_type: file.type?.startsWith('image/') ? 'image' : 'document',
+        media_url: file.url,
+        status: 'sent'
+      });
+    }
+
+    await base44.entities.Conversation.update(selectedConversation.id, {
+      last_message: `📎 ${files.length} arquivo(s) enviado(s)`,
+      last_message_at: new Date().toISOString(),
+      last_message_sender: 'agent',
+      status: 'human_handling',
+      assigned_to: currentUser?.email,
+      assigned_to_name: currentUser?.full_name
+    });
+
+    queryClient.invalidateQueries(['messages', selectedConversation?.id]);
+    queryClient.invalidateQueries(['conversations']);
+  };
+
+  const handleTakeOver = () => {
+    updateConversationMutation.mutate({
+      id: selectedConversation.id,
+      data: {
+        status: 'human_handling',
+        assigned_to: currentUser?.email,
+        assigned_to_name: currentUser?.full_name,
+        assigned_department: currentUser?.department
+      }
+    });
+    setSelectedConversation(prev => ({
+      ...prev,
+      status: 'human_handling',
+      assigned_to: currentUser?.email,
+      assigned_to_name: currentUser?.full_name
+    }));
+  };
+
+  const handleTransfer = async (transferData) => {
+    const existingHistory = selectedConversation.transfer_history || [];
+    
+    await updateConversationMutation.mutateAsync({
+      id: selectedConversation.id,
+      data: {
+        status: transferData.to_user ? 'human_handling' : 'pending_transfer',
+        assigned_to: transferData.to_user || null,
+        assigned_to_name: null,
+        assigned_department: transferData.to_department,
+        transfer_history: [...existingHistory, transferData]
+      }
+    });
+
+    // Notify
+    if (transferData.to_user) {
+      await base44.entities.Notification.create({
+        type: 'system',
+        title: 'Atendimento transferido para você',
+        message: `${selectedConversation.customer_name} - ${transferData.reason}`,
+        reference_id: selectedConversation.id,
+        reference_type: 'conversation',
+        for_user: transferData.to_user,
+        priority: 'high'
+      });
+    }
+  };
+
+  const handleResolve = () => {
+    updateConversationMutation.mutate({
+      id: selectedConversation.id,
+      data: { 
+        status: 'resolved',
+        resolved_at: new Date().toISOString()
+      }
+    });
+    setSelectedConversation(prev => ({ ...prev, status: 'resolved' }));
+  };
+
+  const handleArchive = () => {
+    updateConversationMutation.mutate({
+      id: selectedConversation.id,
+      data: { status: 'archived' }
+    });
+    setSelectedConversation(null);
+    setShowMobileChat(false);
+  };
+
+  return (
+    <div className="h-screen bg-slate-50 flex flex-col">
+      {/* Stats Bar */}
+      <ConversationStats conversations={conversations} />
+
+      <div className="flex-1 flex overflow-hidden">
+        {/* Conversation List */}
+        <div className={cn(
+          "w-full md:w-96 bg-white border-r border-slate-200 flex flex-col",
+          showMobileChat && "hidden md:flex"
+        )}>
+          {/* Header */}
+          <div className="p-4 border-b border-slate-100">
+            <div className="flex items-center justify-between mb-4">
+              <h1 className="text-xl font-bold text-slate-900">Atendimentos</h1>
+              <div className="flex gap-2">
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button 
+                        size="icon" 
+                        variant="ghost"
+                        onClick={() => refetch()}
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Atualizar</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                <Button 
+                  size="sm" 
+                  variant="outline"
+                  onClick={() => setShowWhatsAppSimulator(true)}
+                  className="text-green-600 border-green-300 hover:bg-green-50"
+                >
+                  <Phone className="w-4 h-4 mr-1" />
+                  Simular WhatsApp
+                </Button>
+                <Button 
+                  size="sm" 
+                  onClick={() => setShowNewConversationModal(true)}
+                  className="bg-slate-800 hover:bg-slate-700"
+                >
+                  <Plus className="w-4 h-4 mr-1" />
+                  Nova
+                </Button>
+              </div>
+            </div>
+            
+            {/* Search */}
+            <div className="relative mb-3">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <Input
+                placeholder="Buscar por nome, telefone, email..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-9"
+              />
+            </div>
+
+            {/* Tabs */}
+            <Tabs value={statusFilter} onValueChange={setStatusFilter}>
+              <TabsList className="w-full bg-slate-100">
+                <TabsTrigger value="active" className="flex-1 text-xs">Ativos</TabsTrigger>
+                <TabsTrigger value="mine" className="flex-1 text-xs">Meus</TabsTrigger>
+                <TabsTrigger value="ai_handling" className="flex-1 text-xs">IA</TabsTrigger>
+                <TabsTrigger value="pending_transfer" className="flex-1 text-xs">Fila</TabsTrigger>
+                <TabsTrigger value="resolved" className="flex-1 text-xs">Resolvidos</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
+
+          {/* List */}
+          <div className="flex-1 overflow-y-auto">
+            <ConversationList
+              conversations={sortedConversations}
+              selectedId={selectedConversation?.id}
+              onSelect={handleSelectConversation}
+              isLoading={loadingConversations}
+            />
+          </div>
+        </div>
+
+        {/* Chat Area */}
+        <div className={cn(
+          "flex-1 flex flex-col bg-slate-50",
+          !showMobileChat && "hidden md:flex"
+        )}>
+          {selectedConversation ? (
+            <>
+              {/* Chat Header */}
+              <div className="bg-white border-b border-slate-200 p-4">
+                <div className="flex items-center gap-3">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="md:hidden"
+                    onClick={() => setShowMobileChat(false)}
+                  >
+                    <ArrowLeft className="w-5 h-5" />
+                  </Button>
+
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-slate-200 to-slate-300 flex items-center justify-center">
+                    <span className="font-semibold text-slate-600">
+                      {selectedConversation.customer_name?.charAt(0) || "?"}
+                    </span>
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h2 className="font-semibold text-slate-900 truncate">
+                        {selectedConversation.customer_name || selectedConversation.customer_phone}
+                      </h2>
+                      {selectedConversation.priority === 'urgent' && (
+                        <Badge className="bg-red-100 text-red-700 border-red-200">
+                          <AlertTriangle className="w-3 h-3 mr-1" />
+                          Urgente
+                        </Badge>
+                      )}
+                      {selectedConversation.priority === 'high' && (
+                        <Badge className="bg-orange-100 text-orange-700 border-orange-200">
+                          Alta
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 text-sm text-slate-500">
+                      {selectedConversation.customer_phone && (
+                        <span className="flex items-center gap-1">
+                          <Phone className="w-3 h-3" />
+                          {selectedConversation.customer_phone}
+                        </span>
+                      )}
+                      <ChannelBadge channel={selectedConversation.channel} size="sm" />
+                      <Badge className={statusColors[selectedConversation.status]}>
+                        {selectedConversation.status === 'ai_handling' && <Bot className="w-3 h-3 mr-1" />}
+                        {statusLabels[selectedConversation.status]}
+                      </Badge>
+                      {selectedConversation.assigned_to_name && (
+                        <span className="text-xs text-slate-400">
+                          • {selectedConversation.assigned_to_name}
+                        </span>
+                      )}
+                    </div>
+                    {/* Tags and Notes quick access */}
+                    <div className="flex items-center gap-1 mt-1">
+                      <TagsManager 
+                        conversationId={selectedConversation.id}
+                        currentTags={selectedConversation.tags || []}
+                      />
+                      <InternalNotes
+                        conversationId={selectedConversation.id}
+                        currentNotes={selectedConversation.notes || ''}
+                      />
+                      {selectedConversation.tags?.length > 0 && (
+                        <div className="flex gap-1 ml-2">
+                          {selectedConversation.tags.slice(0, 3).map((tag, idx) => (
+                            <Badge key={idx} variant="outline" className="text-xs h-5">
+                              {tag}
+                            </Badge>
+                          ))}
+                          {selectedConversation.tags.length > 3 && (
+                            <Badge variant="outline" className="text-xs h-5">
+                              +{selectedConversation.tags.length - 3}
+                            </Badge>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    {selectedConversation.status === 'ai_handling' && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleTakeOver}
+                        className="text-violet-600 border-violet-200 hover:bg-violet-50"
+                      >
+                        <UserPlus className="w-4 h-4 mr-1" />
+                        Assumir
+                      </Button>
+                    )}
+
+                    {selectedConversation.status === 'pending_transfer' && (
+                      <Button
+                        size="sm"
+                        onClick={handleTakeOver}
+                        className="bg-orange-600 hover:bg-orange-700"
+                      >
+                        <UserPlus className="w-4 h-4 mr-1" />
+                        Atender
+                      </Button>
+                    )}
+
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => analyzeWithAI.mutate()}
+                            disabled={analyzeWithAI.isPending}
+                          >
+                            <Sparkles className={cn(
+                              "w-4 h-4",
+                              analyzeWithAI.isPending && "animate-spin"
+                            )} />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Analisar com IA</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setShowTransferModal(true)}
+                    >
+                      <ArrowRightLeft className="w-4 h-4" />
+                    </Button>
+
+                    {(selectedConversation.customer_email || selectedConversation.channel === 'email') && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setShowEmailModal(true)}
+                      >
+                        <Mail className="w-4 h-4" />
+                      </Button>
+                    )}
+
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setShowDetails(!showDetails)}
+                    >
+                      {showDetails ? (
+                        <PanelRightClose className="w-4 h-4" />
+                      ) : (
+                        <PanelRightOpen className="w-4 h-4" />
+                      )}
+                    </Button>
+
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon">
+                          <MoreVertical className="w-5 h-5" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={handleResolve}>
+                          <CheckCircle className="w-4 h-4 mr-2" />
+                          Marcar como resolvido
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={handleArchive}>
+                          <Archive className="w-4 h-4 mr-2" />
+                          Arquivar
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem>
+                          <Tag className="w-4 h-4 mr-2" />
+                          Adicionar tag
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                </div>
+
+                {/* AI Summary bar */}
+                {selectedConversation.ai_summary && (
+                  <div className="mt-3 p-2 bg-violet-50 rounded-lg border border-violet-100">
+                    <div className="flex items-start gap-2">
+                      <Bot className="w-4 h-4 text-violet-600 mt-0.5" />
+                      <div className="flex-1 text-sm">
+                        <p className="text-violet-800">{selectedConversation.ai_summary}</p>
+                        {selectedConversation.ai_suggested_action && (
+                          <p className="text-violet-600 mt-1">
+                            💡 {selectedConversation.ai_suggested_action}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Messages */}
+              <div className="flex-1 overflow-y-auto p-4">
+                {loadingMessages ? (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="animate-spin w-8 h-8 border-2 border-slate-300 border-t-slate-600 rounded-full" />
+                  </div>
+                ) : messages.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-full text-slate-400">
+                    <MessageCircle className="w-12 h-12 mb-3 opacity-50" />
+                    <p>Nenhuma mensagem ainda</p>
+                  </div>
+                ) : (
+                  <>
+                    {messages.map(msg => (
+                      <MessageBubble key={msg.id} message={msg} />
+                    ))}
+                    <div ref={messagesEndRef} />
+                  </>
+                )}
+              </div>
+
+              {/* Input */}
+              {selectedConversation.status !== 'archived' && (
+                <div className="bg-white border-t p-3">
+                  <div className="flex items-end gap-2">
+                    <QuickResponses onSelect={handleQuickResponse} />
+                    <KnowledgeBasePanel onInsert={handleQuickResponse} />
+                    <FileUploader 
+                      onFileUploaded={handleFilesUploaded}
+                      disabled={sendMessageMutation.isPending || selectedConversation.status === 'ai_handling'}
+                    />
+                    <div className="flex-1">
+                      <ChatInput
+                        value={messageInput}
+                        onChange={setMessageInput}
+                        onSend={handleSendMessage}
+                        disabled={sendMessageMutation.isPending || selectedConversation.status === 'ai_handling'}
+                        placeholder={
+                          selectedConversation.status === 'ai_handling'
+                            ? "Clique em 'Assumir' para responder..."
+                            : "Digite sua mensagem..."
+                        }
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
+              <div className="w-20 h-20 rounded-full bg-slate-100 flex items-center justify-center mb-4">
+                <MessageCircle className="w-8 h-8 opacity-50" />
+              </div>
+              <p className="text-lg font-medium">Selecione uma conversa</p>
+              <p className="text-sm">Escolha uma conversa na lista para começar</p>
+            </div>
+          )}
+        </div>
+
+        {/* Details Panel */}
+        {showDetails && selectedConversation && (
+          <ConversationDetails 
+            conversation={selectedConversation} 
+            onClose={() => setShowDetails(false)}
+          />
+        )}
+      </div>
+
+      {/* Modals */}
+      <SendEmailModal
+        open={showEmailModal}
+        onOpenChange={setShowEmailModal}
+        customer={{
+          name: selectedConversation?.customer_name,
+          email: selectedConversation?.customer_email,
+          phone: selectedConversation?.customer_phone
+        }}
+        conversation={selectedConversation}
+        onSuccess={() => {
+          queryClient.invalidateQueries(['messages', selectedConversation?.id]);
+        }}
+      />
+
+      <NewConversationModal
+        open={showNewConversationModal}
+        onOpenChange={setShowNewConversationModal}
+        onSuccess={(conv) => {
+          setSelectedConversation(conv);
+          setShowMobileChat(true);
+        }}
+      />
+
+      <TransferModal
+        open={showTransferModal}
+        onOpenChange={setShowTransferModal}
+        conversation={selectedConversation}
+        currentUser={currentUser}
+        onTransfer={handleTransfer}
+      />
+
+      <WhatsAppSimulator
+        open={showWhatsAppSimulator}
+        onOpenChange={setShowWhatsAppSimulator}
+      />
+    </div>
+  );
+}

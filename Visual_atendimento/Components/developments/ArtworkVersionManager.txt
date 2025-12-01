@@ -1,0 +1,375 @@
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { 
+  Upload,
+  Image,
+  History,
+  Eye,
+  Download,
+  Trash2,
+  Loader2,
+  Plus,
+  CheckCircle2,
+  XCircle
+} from "lucide-react";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
+
+export default function ArtworkVersionManager({ developmentId, currentUser, onVersionAdded }) {
+  const queryClient = useQueryClient();
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [newVersion, setNewVersion] = useState({
+    file: null,
+    fileUrl: '',
+    comments: ''
+  });
+  const [compareVersions, setCompareVersions] = useState([]);
+
+  // Load versions
+  const { data: versions = [], isLoading } = useQuery({
+    queryKey: ['artwork-versions', developmentId],
+    queryFn: () => base44.entities.ArtworkVersion.filter(
+      { development_id: developmentId },
+      '-version_number'
+    ),
+    enabled: !!developmentId
+  });
+
+  // Upload new version
+  const uploadVersion = useMutation({
+    mutationFn: async (data) => {
+      const nextVersion = versions.length > 0 
+        ? Math.max(...versions.map(v => v.version_number)) + 1 
+        : 1;
+
+      // Mark previous versions as superseded
+      for (const v of versions.filter(v => v.status === 'pending')) {
+        await base44.entities.ArtworkVersion.update(v.id, { status: 'superseded' });
+      }
+
+      const version = await base44.entities.ArtworkVersion.create({
+        development_id: developmentId,
+        version_number: nextVersion,
+        file_url: data.fileUrl,
+        file_type: 'image',
+        uploader_email: currentUser?.email,
+        uploader_name: currentUser?.full_name,
+        comments: data.comments,
+        status: 'pending'
+      });
+
+      // Update development with new artwork
+      const dev = await base44.entities.DevelopmentRequest.filter({ id: developmentId });
+      if (dev.length > 0) {
+        await base44.entities.DevelopmentRequest.update(developmentId, {
+          artwork_files: [...(dev[0].artwork_files || []), data.fileUrl],
+          current_artwork_version: nextVersion
+        });
+      }
+
+      // Log activity
+      await base44.entities.ActivityLog.create({
+        user_email: currentUser?.email,
+        user_name: currentUser?.full_name,
+        action_type: 'upload',
+        entity_type: 'artwork',
+        entity_id: version.id,
+        entity_name: `Versão ${nextVersion}`,
+        description: `Nova versão da arte enviada para o desenvolvimento`
+      });
+
+      return version;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['artwork-versions', developmentId]);
+      setShowUploadModal(false);
+      setNewVersion({ file: null, fileUrl: '', comments: '' });
+      if (onVersionAdded) onVersionAdded();
+    }
+  });
+
+  // Delete version
+  const deleteVersion = useMutation({
+    mutationFn: (id) => base44.entities.ArtworkVersion.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['artwork-versions', developmentId]);
+    }
+  });
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setUploading(true);
+    const { file_url } = await base44.integrations.Core.UploadFile({ file });
+    setNewVersion(prev => ({ ...prev, fileUrl: file_url, file }));
+    setUploading(false);
+  };
+
+  const handleSubmit = () => {
+    if (!newVersion.fileUrl) return;
+    uploadVersion.mutate(newVersion);
+  };
+
+  const toggleCompare = (version) => {
+    if (compareVersions.includes(version.id)) {
+      setCompareVersions(prev => prev.filter(id => id !== version.id));
+    } else if (compareVersions.length < 2) {
+      setCompareVersions(prev => [...prev, version.id]);
+    }
+  };
+
+  const comparisonVersions = versions.filter(v => compareVersions.includes(v.id));
+
+  const statusConfig = {
+    pending: { label: 'Pendente', color: 'bg-amber-100 text-amber-700' },
+    approved: { label: 'Aprovada', color: 'bg-emerald-100 text-emerald-700' },
+    rejected: { label: 'Rejeitada', color: 'bg-red-100 text-red-700' },
+    superseded: { label: 'Substituída', color: 'bg-slate-100 text-slate-500' }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h4 className="font-semibold text-slate-900 flex items-center gap-2">
+          <History className="w-4 h-4 text-violet-500" />
+          Versões da Arte ({versions.length})
+        </h4>
+        <Button size="sm" onClick={() => setShowUploadModal(true)}>
+          <Plus className="w-4 h-4 mr-1" />
+          Nova Versão
+        </Button>
+      </div>
+
+      {/* Comparison Mode */}
+      {compareVersions.length === 2 && comparisonVersions.length === 2 && (
+        <Card className="border-violet-200 bg-violet-50">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <span className="font-medium text-violet-900">Comparação lado a lado</span>
+              <Button 
+                variant="ghost" 
+                size="sm"
+                onClick={() => setCompareVersions([])}
+                className="text-violet-600"
+              >
+                Fechar comparação
+              </Button>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              {comparisonVersions.map(v => (
+                <div key={v.id}>
+                  <p className="text-sm font-medium text-center mb-2">Versão {v.version_number}</p>
+                  <img 
+                    src={v.file_url} 
+                    alt={`Versão ${v.version_number}`}
+                    className="w-full rounded-lg border"
+                  />
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Versions List */}
+      {isLoading ? (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+        </div>
+      ) : versions.length === 0 ? (
+        <Card className="border-dashed">
+          <CardContent className="p-8 text-center">
+            <Image className="w-12 h-12 mx-auto text-slate-300 mb-3" />
+            <p className="text-slate-500">Nenhuma versão de arte ainda</p>
+            <Button 
+              variant="outline" 
+              className="mt-4"
+              onClick={() => setShowUploadModal(true)}
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              Enviar primeira arte
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {versions.map(version => (
+            <Card 
+              key={version.id} 
+              className={`${version.status === 'approved' ? 'border-emerald-200 bg-emerald-50/50' : ''}`}
+            >
+              <CardContent className="p-4">
+                <div className="flex gap-4">
+                  <div className="flex-shrink-0">
+                    <a 
+                      href={version.file_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block w-24 h-24 rounded-lg overflow-hidden border hover:border-violet-400 transition-colors relative group"
+                    >
+                      <img 
+                        src={version.file_url} 
+                        alt={`Versão ${version.version_number}`}
+                        className="w-full h-full object-cover"
+                      />
+                      <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <Eye className="w-5 h-5 text-white" />
+                      </div>
+                    </a>
+                  </div>
+                  
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-medium text-slate-900">Versão {version.version_number}</span>
+                      <Badge className={statusConfig[version.status]?.color}>
+                        {statusConfig[version.status]?.label}
+                      </Badge>
+                    </div>
+                    
+                    {version.comments && (
+                      <p className="text-sm text-slate-600 mb-2">{version.comments}</p>
+                    )}
+                    
+                    <div className="text-xs text-slate-400 space-y-1">
+                      <p>Por {version.uploader_name} em {format(new Date(version.created_date), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}</p>
+                      {version.approved_at && (
+                        <p className="text-emerald-600">
+                          Aprovada pelo cliente em {format(new Date(version.approved_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                          {version.approval_ip && ` (IP: ${version.approval_ip})`}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => toggleCompare(version)}
+                      className={compareVersions.includes(version.id) ? 'bg-violet-100 border-violet-300' : ''}
+                    >
+                      {compareVersions.includes(version.id) ? 'Selecionada' : 'Comparar'}
+                    </Button>
+                    <a href={version.file_url} download>
+                      <Button variant="outline" size="sm" className="w-full">
+                        <Download className="w-4 h-4" />
+                      </Button>
+                    </a>
+                    {version.status !== 'approved' && (
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        className="text-red-600"
+                        onClick={() => deleteVersion.mutate(version.id)}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Upload Modal */}
+      <Dialog open={showUploadModal} onOpenChange={setShowUploadModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Nova Versão da Arte</DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Arquivo</Label>
+              {newVersion.fileUrl ? (
+                <div className="relative">
+                  <img 
+                    src={newVersion.fileUrl} 
+                    alt="Preview"
+                    className="w-full max-h-64 object-contain rounded-lg border"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="absolute top-2 right-2"
+                    onClick={() => setNewVersion(prev => ({ ...prev, fileUrl: '', file: null }))}
+                  >
+                    Trocar
+                  </Button>
+                </div>
+              ) : (
+                <label className="block w-full h-32 rounded-lg border-2 border-dashed border-slate-300 flex items-center justify-center cursor-pointer hover:border-slate-400 transition-colors">
+                  {uploading ? (
+                    <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+                  ) : (
+                    <div className="text-center">
+                      <Upload className="w-8 h-8 mx-auto text-slate-400 mb-2" />
+                      <span className="text-sm text-slate-500">Clique para enviar</span>
+                    </div>
+                  )}
+                  <input
+                    type="file"
+                    accept="image/*,.pdf,.ai,.psd"
+                    className="hidden"
+                    onChange={handleFileUpload}
+                    disabled={uploading}
+                  />
+                </label>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label>Comentários</Label>
+              <Textarea
+                value={newVersion.comments}
+                onChange={(e) => setNewVersion(prev => ({ ...prev, comments: e.target.value }))}
+                placeholder="Alterações realizadas, observações..."
+                rows={3}
+              />
+            </div>
+
+            <div className="flex gap-3 pt-4">
+              <Button 
+                variant="outline" 
+                className="flex-1"
+                onClick={() => setShowUploadModal(false)}
+              >
+                Cancelar
+              </Button>
+              <Button 
+                className="flex-1"
+                onClick={handleSubmit}
+                disabled={!newVersion.fileUrl || uploadVersion.isPending}
+              >
+                {uploadVersion.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Enviando...
+                  </>
+                ) : (
+                  'Enviar Versão'
+                )}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

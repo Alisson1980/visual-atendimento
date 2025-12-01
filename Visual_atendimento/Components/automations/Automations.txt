@@ -1,0 +1,199 @@
+import { useEffect, useCallback } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+
+export function useAutomationEngine() {
+  const queryClient = useQueryClient();
+
+  // Load active rules
+  const { data: rules = [] } = useQuery({
+    queryKey: ['automation-rules'],
+    queryFn: () => base44.entities.AutomationRule.filter({ is_active: true }, '-priority', 100),
+    staleTime: 60000
+  });
+
+  // Process a conversation through automation rules
+  const processConversation = useCallback(async (conversation, message = null) => {
+    const matchedRules = [];
+    const messageContent = message?.content?.toLowerCase() || '';
+    const lastMessage = conversation.last_message?.toLowerCase() || '';
+    const textToAnalyze = messageContent || lastMessage;
+
+    for (const rule of rules) {
+      let matches = false;
+
+      // Check trigger conditions
+      switch (rule.trigger) {
+        case 'keyword':
+          if (rule.conditions?.keywords?.length > 0) {
+            matches = rule.conditions.keywords.some(kw => 
+              textToAnalyze.includes(kw.toLowerCase())
+            );
+          }
+          break;
+
+        case 'classification':
+          if (rule.conditions?.classifications?.length > 0) {
+            matches = rule.conditions.classifications.includes(conversation.classification);
+          }
+          break;
+
+        case 'priority':
+          if (rule.conditions?.priorities?.length > 0) {
+            matches = rule.conditions.priorities.includes(conversation.priority);
+          }
+          break;
+
+        case 'new_conversation':
+          matches = !conversation.message_count || conversation.message_count <= 1;
+          break;
+
+        case 'inactivity':
+          if (rule.conditions?.inactivity_minutes && conversation.last_message_at) {
+            const lastMessageTime = new Date(conversation.last_message_at);
+            const minutesSince = (Date.now() - lastMessageTime.getTime()) / 60000;
+            matches = minutesSince >= rule.conditions.inactivity_minutes;
+          }
+          break;
+      }
+
+      // Check channel condition if specified
+      if (matches && rule.conditions?.channel) {
+        matches = conversation.channel === rule.conditions.channel;
+      }
+
+      if (matches) {
+        matchedRules.push(rule);
+      }
+    }
+
+    return matchedRules;
+  }, [rules]);
+
+  // Execute rule actions
+  const executeRuleActions = useCallback(async (rule, conversation, currentUser) => {
+    const updates = {};
+    const actions = rule.actions || {};
+
+    // Assignment actions
+    if (actions.assign_to_department) {
+      updates.assigned_department = actions.assign_to_department;
+      updates.status = 'pending_transfer';
+    }
+
+    if (actions.assign_to_user) {
+      updates.assigned_to = actions.assign_to_user;
+      updates.status = 'human_handling';
+    }
+
+    // Priority action
+    if (actions.set_priority) {
+      updates.set_priority = actions.set_priority;
+    }
+
+    // Tags action
+    if (actions.add_tags?.length > 0) {
+      const existingTags = conversation.tags || [];
+      updates.tags = [...new Set([...existingTags, ...actions.add_tags])];
+    }
+
+    // Update conversation if there are changes
+    if (Object.keys(updates).length > 0) {
+      await base44.entities.Conversation.update(conversation.id, updates);
+    }
+
+    // Send auto-reply
+    if (actions.send_message) {
+      await base44.entities.Message.create({
+        conversation_id: conversation.id,
+        content: actions.send_message,
+        sender_type: 'ai',
+        sender_name: 'Assistente Virtual',
+        message_type: 'text',
+        status: 'sent'
+      });
+
+      await base44.entities.Conversation.update(conversation.id, {
+        last_message: actions.send_message,
+        last_message_at: new Date().toISOString(),
+        last_message_sender: 'ai'
+      });
+    }
+
+    // Create notifications
+    if (actions.notify_users?.length > 0) {
+      for (const userEmail of actions.notify_users) {
+        await base44.entities.Notification.create({
+          type: 'system',
+          title: `Automação: ${rule.name}`,
+          message: `Conversa de ${conversation.customer_name} acionou a regra "${rule.name}"`,
+          reference_id: conversation.id,
+          reference_type: 'conversation',
+          for_user: userEmail,
+          priority: conversation.priority || 'normal'
+        });
+      }
+    }
+
+    if (actions.notify_department) {
+      await base44.entities.Notification.create({
+        type: 'system',
+        title: `Automação: ${rule.name}`,
+        message: `Conversa de ${conversation.customer_name} requer atenção do setor ${actions.notify_department}`,
+        reference_id: conversation.id,
+        reference_type: 'conversation',
+        priority: 'high'
+      });
+    }
+
+    // Increment execution count
+    await base44.entities.AutomationRule.update(rule.id, {
+      execution_count: (rule.execution_count || 0) + 1
+    });
+
+    return updates;
+  }, []);
+
+  return {
+    rules,
+    processConversation,
+    executeRuleActions
+  };
+}
+
+// Component to check inactivity periodically
+export default function AutomationEngine({ enabled = true }) {
+  const queryClient = useQueryClient();
+  const { rules, processConversation, executeRuleActions } = useAutomationEngine();
+
+  // Check for inactive conversations every 5 minutes
+  useEffect(() => {
+    if (!enabled) return;
+
+    const checkInactivity = async () => {
+      const inactivityRules = rules.filter(r => r.trigger === 'inactivity' && r.is_active);
+      if (inactivityRules.length === 0) return;
+
+      // Get conversations that might be inactive
+      const conversations = await base44.entities.Conversation.filter(
+        { status: 'human_handling' },
+        '-last_message_at',
+        50
+      );
+
+      for (const conv of conversations) {
+        const matchedRules = await processConversation(conv);
+        for (const rule of matchedRules.filter(r => r.trigger === 'inactivity')) {
+          await executeRuleActions(rule, conv, null);
+        }
+      }
+
+      queryClient.invalidateQueries(['conversations']);
+    };
+
+    const interval = setInterval(checkInactivity, 5 * 60 * 1000); // Every 5 minutes
+    return () => clearInterval(interval);
+  }, [enabled, rules, processConversation, executeRuleActions, queryClient]);
+
+  return null; // This is a background component
+}
